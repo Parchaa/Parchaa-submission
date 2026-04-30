@@ -58,6 +58,7 @@ export default function CompletenessPage() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
 
+  const dzText = makeUploadDropzone(setText, setError)
   const dz1 = makeUploadDropzone(setDoc1, setError)
   const dz2 = makeUploadDropzone(setDoc2, setError)
 
@@ -114,9 +115,14 @@ export default function CompletenessPage() {
                   {CHECKLIST_TYPES.map(t => <option key={t}>{t}</option>)}
                 </select>
               </div>
+              <div {...dzText.getRootProps()} className={`dropzone${dzText.isDragActive ? ' active' : ''}`} style={{ marginBottom: 10 }}>
+                <input {...dzText.getInputProps()} />
+                <div className="dropzone-text">Drop or <span>browse</span></div>
+                <div className="dropzone-hint">PDF · DOCX · TXT</div>
+              </div>
               <textarea
                 className="form-textarea"
-                style={{ minHeight: 320 }}
+                style={{ minHeight: 200 }}
                 placeholder="Paste the submission document text…"
                 value={text}
                 onChange={e => setText(e.target.value)}
