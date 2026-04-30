@@ -1,6 +1,6 @@
 # CDSCO RegAI — Regulatory Workflow Automation
 
-CDSCO RegAI is an advanced AI-powered platform designed to automate and streamline regulatory workflows for the Central Drugs Standard Control Organisation (CDSCO). It leverages state-of-the-art Large Language Models (Google Gemini) to process, analyze, and manage regulatory documents such as Clinical Trial Applications, New Drug Applications, and Serious Adverse Event (SAE) reports.
+CDSCO RegAI is an advanced AI-powered platform designed to automate and streamline regulatory workflows for the Central Drugs Standard Control Organisation (CDSCO). It leverages state-of-the-art Large Language Models to process, analyze, and manage regulatory documents such as Clinical Trial Applications, New Drug Applications, and Serious Adverse Event (SAE) reports.
 
 ## 🚀 Features
 
@@ -19,7 +19,7 @@ The platform uses a modern decoupled architecture:
 
 - **Frontend**: A React application built with Vite, providing a seamless and responsive user interface for document uploading, viewing analysis results, and managing workflows.
 - **Backend API**: A high-performance RESTful API built with FastAPI (Python) that handles requests from the frontend, orchestrates file processing, and interfaces with the AI models.
-- **AI Engine**: Python-based modules (`modules/`) integrating with the **Google Gemini API** for natural language understanding, extraction, and generation.
+- **AI Engine**: Python-based modules (`modules/`) integrating with an **Advanced LLM API** for natural language understanding, extraction, and generation.
 - **Database**: PostgreSQL database used for persisting application state, metadata, and workflow history.
 - **Storage**: AWS S3 integration for secure document storage and retrieval.
 - **Alternative UI**: A built-in Streamlit application (`app.py`) for rapid prototyping and internal administrative use.
@@ -55,7 +55,7 @@ graph TD
     subgraph Infrastructure [Infrastructure & External APIs]
         DB[(PostgreSQL)]
         S3[(AWS S3 Storage)]
-        LLM((Google Gemini API))
+        LLM((Advanced LLM API))
     end
 
     %% Connections
@@ -73,7 +73,7 @@ graph TD
 1. **Document Upload**: Users upload documents (PDF, DOCX, TXT) via the React frontend. The file is sent to the FastAPI backend via the `/api/upload` endpoint.
 2. **Text Extraction**: The backend extracts raw text from the uploaded document using built-in utilities or OCR if necessary.
 3. **AI Processing**: Based on the requested workflow (e.g., completeness check), the backend routes the extracted text to the relevant core module (e.g., `completeness.py`).
-4. **LLM Invocation**: The module constructs a tailored prompt combining the document text, CDSCO guidelines, and the specific task instructions, then invokes the Google Gemini API.
+4. **LLM Invocation**: The module constructs a tailored prompt combining the document text, CDSCO guidelines, and the specific task instructions, then invokes the LLM API.
 5. **Structured Parsing**: The LLM returns a structured JSON response containing the analysis (e.g., missing checklist items, summaries, redacted text).
 6. **Persistence & Storage**: Metadata and analysis results are saved to the PostgreSQL database, and files are optionally archived in AWS S3.
 7. **Response to Client**: The FastAPI backend returns the structured result to the React frontend, which renders dynamic dashboards, diff views, and status badges.
@@ -114,13 +114,13 @@ cdsco_app/
 - Node.js (v18+)
 - Python (3.10+)
 - PostgreSQL Database
-- Google Gemini API Key
+- LLM API Key
 
 ### 1. Environment Configuration
 Create a `.env` file in the root directory (use `.env.example` as a template):
 ```env
-GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash
+API_KEY=your_api_key
+MODEL_NAME=your_model_name
 DATABASE_URL=postgresql://user:password@localhost:5432/cdsco_regai
 AWS_ACCESS_KEY_ID=your_aws_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret

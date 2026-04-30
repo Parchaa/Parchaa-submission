@@ -43,6 +43,7 @@ PATTERNS: List[Tuple[str, str]] = [
     ("Pincode",         r"\b[1-9][0-9]{5}\b"),
     # Bank account: exclude numbers preceded by '+' (phone country codes)
     ("Bank Account",    r"(?<!\+)(?<!\d)\d{11,18}(?!\d)"),
+    ("IFSC Code",       r"\b[A-Z]{4}0[A-Z0-9]{6}\b"),
 ]
 
 _TOKEN_COUNTERS: dict = {}
