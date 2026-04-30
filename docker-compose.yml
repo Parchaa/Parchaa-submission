@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cdsco_db
+    environment:
+      POSTGRES_USER: cdsco
+      POSTGRES_PASSWORD: cdsco123
+      POSTGRES_DB: cdsco_regai
+    ports:
+      - "5432:5432"
+    volumes:
+      - cdsco_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cdsco -d cdsco_regai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: python:3.11-slim
+    container_name: cdsco_app
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      bash -c "pip install -r requirements_docker.txt -q &&
+               python -m spacy download en_core_web_lg &&
+               streamlit run app.py --server.port 8501 --server.headless true"
+
+volumes:
+  cdsco_pgdata:
