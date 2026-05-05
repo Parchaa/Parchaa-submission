@@ -1,6 +1,6 @@
 import time
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.deps import get_ai
 from modules.completeness import assess_completeness, compare_documents, text_diff
 from utils.file_handler import truncate
@@ -12,10 +12,24 @@ class CompareRequest(BaseModel):
     document1: str
     document2: str
 
+    @field_validator("document1", "document2")
+    @classmethod
+    def docs_not_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError("document fields must not be empty")
+        return v
+
 
 class CompletenessRequest(BaseModel):
     text: str
     checklist_type: str = "Clinical Trial Application"
+
+    @field_validator("text")
+    @classmethod
+    def text_not_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError("text must not be empty")
+        return v
 
 
 @router.post("/compare")

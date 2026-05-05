@@ -1,8 +1,8 @@
 import time
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.deps import get_ai
-from modules.summarizer import summarise_document
+from modules.summarizer import summarise_document, PROMPTS
 from utils.file_handler import truncate
 
 router = APIRouter()
@@ -11,6 +11,20 @@ router = APIRouter()
 class SummarizeRequest(BaseModel):
     text: str
     document_type: str = "SUGAM Application"
+
+    @field_validator("text")
+    @classmethod
+    def text_not_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError("text must not be empty")
+        return v
+
+    @field_validator("document_type")
+    @classmethod
+    def doc_type_valid(cls, v):
+        if v not in PROMPTS:
+            raise ValueError(f"document_type must be one of: {', '.join(PROMPTS)}")
+        return v
 
 
 @router.post("/summarize")

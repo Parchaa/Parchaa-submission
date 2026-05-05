@@ -24,46 +24,85 @@ _REG_REFS = {
     ),
 }
 
-PROMPT = """You are a CDSCO-qualified pharmaceutical inspector writing a formal inspection report.
-Convert the raw observations below into a structured report following CDSCO's official format.
+PROMPT = """You are a CDSCO-qualified pharmaceutical inspector writing a formal inspection report for official submission.
+Convert the raw observations below into a structured report following CDSCO's standard format.
 
 Inspection Type: {inspection_type}
 Applicable Regulations: {reg_refs}
 
-Classification definitions:
-  Critical — deficiency that may cause serious harm to patient safety or product quality, or is a major fraud/falsification
-  Major    — substantial deficiency that may compromise product quality or patient safety
-  Minor    — deficiency not likely to cause harm but requires correction
-  Observation — area of concern noted for improvement
+=== FINDING CLASSIFICATION DEFINITIONS ===
+Critical    — deficiency likely to result in a serious risk to patient safety or public health; falsification of data; systemic failure that invalidates product batches or trial data; requires immediate action
+Major       — substantial deficiency that may compromise product quality, patient safety, or data integrity, but does not pose an immediate risk; could become critical if uncorrected
+Minor       — deficiency that does not compromise quality or safety but indicates imperfect adherence to GxP; requires correction
+Observation — area noted for potential improvement; not a regulatory violation; no formal response required but good practice to address
 
-Return JSON exactly:
+=== FINDING ID FORMAT ===
+Use a code that indicates the area, e.g.:
+  OBS-ICF-001  (Informed Consent Form)
+  OBS-CRF-001  (Case Report Form / data)
+  OBS-DEV-001  (Protocol deviation / eligibility)
+  OBS-DRUG-001 (Investigational product / dispensing)
+  OBS-EC-001   (Ethics Committee)
+  OBS-TRN-001  (Training / qualification)
+  OBS-SOP-001  (SOPs / documentation)
+  OBS-TEMP-001 (Temperature / storage — for GMP/GDP)
+  OBS-LABEL-001(Labelling)
+  OBS-QC-001   (Quality control / testing)
+
+=== DESCRIPTION QUALITY STANDARD ===
+Each finding description must:
+  1. Name the specific subject/batch/document/person involved (anonymise patient IDs to IN-XXX-XXXX format if present)
+  2. State the observed fact precisely (dates, values, counts if available)
+  3. State what was required (reference the specific rule, SOP, or protocol requirement)
+  4. State why this matters (patient safety risk or data integrity consequence)
+
+=== PROPOSED CAPA QUALITY STANDARD ===
+Each CAPA must specify:
+  - Immediate corrective action (what must be done now)
+  - Root cause investigation required (yes/no, and what to investigate)
+  - Preventive measure (systemic change to prevent recurrence)
+  - Suggested timeline (e.g. "within 7 days", "within 30 days", "at next training cycle")
+
+=== COMPLIANCE DETERMINATION ===
+  Compliant               — no Critical or Major findings; Minor findings noted for correction
+  Conditionally Compliant — Major findings present; CAPA accepted within specified timeframe
+  Non-Compliant           — Critical findings present; or persistent non-compliance; or data integrity concerns
+
+=== FOLLOW-UP TIMELINE ===
+  Critical findings: CAPA response within 15 working days
+  Major findings:    CAPA response within 30 days
+  Minor only:        Response within 60 days or at next scheduled inspection
+
+Return ONLY valid JSON, no markdown, no commentary:
 {{
   "report_header": {{
     "inspection_type": "{inspection_type}",
-    "facility_name": "...",
-    "facility_address": "...",
-    "inspection_date": "...",
-    "inspectors": ["..."],
-    "report_date": "..."
+    "facility_name": "full facility name",
+    "facility_address": "city/address as stated",
+    "inspection_date": "date or date range",
+    "inspectors": ["Inspector Name — designation/organisation"],
+    "report_date": "date report finalised"
   }},
-  "executive_summary": "...",
-  "findings": [{{
-    "finding_id": "F-001",
-    "category": "Critical"|"Major"|"Minor"|"Observation",
-    "description": "...",
-    "regulatory_reference": "specific rule/section violated",
-    "risk_level": "High"|"Medium"|"Low",
-    "corrective_action_required": true,
-    "proposed_capa": "specific corrective and preventive action"
-  }}],
+  "executive_summary": "3-4 sentences: what was inspected, key deficiency themes, overall compliance conclusion, and immediate implications",
+  "findings": [
+    {{
+      "finding_id": "OBS-XXX-001",
+      "category": "Critical"|"Major"|"Minor"|"Observation",
+      "description": "specific finding per quality standard above",
+      "regulatory_reference": "exact rule/section/clause violated",
+      "risk_level": "High"|"Medium"|"Low",
+      "corrective_action_required": true|false,
+      "proposed_capa": "immediate action + root cause investigation + preventive measure + timeline"
+    }}
+  ],
   "gmp_compliance": "Compliant"|"Conditionally Compliant"|"Non-Compliant",
-  "critical_findings_count": 0,
-  "major_findings_count": 0,
-  "minor_findings_count": 0,
-  "overall_assessment": "...",
-  "recommendations": ["..."],
-  "follow_up_required": true,
-  "follow_up_timeline": "e.g. 30 days for CAPA submission"
+  "critical_findings_count": integer,
+  "major_findings_count": integer,
+  "minor_findings_count": integer,
+  "overall_assessment": "2-3 sentences on systemic compliance posture, risk to subjects/data, and any patterns across findings",
+  "recommendations": ["specific actionable recommendation — name the responsible party and timeline"],
+  "follow_up_required": true|false,
+  "follow_up_timeline": "specific timeline per classification rules above"
 }}
 
 Raw Observations:
@@ -76,7 +115,7 @@ def generate_inspection_report(text: str, report_type: str, client, model_name: 
     prompt = PROMPT.format(
         inspection_type=report_type,
         reg_refs=reg_refs,
-        text=text[:24000],
+        text=text[:150000],
     )
     result = call_gemini(client, model_name, prompt, fallback={"error": "Report generation failed"})
     # Populate count fields if Gemini didn't fill them

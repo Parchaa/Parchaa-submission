@@ -1,7 +1,7 @@
 import time
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.deps import get_ai
 from modules.inspection_report import generate_inspection_report, format_report_as_text
 from utils.file_handler import truncate
@@ -9,9 +9,29 @@ from utils.file_handler import truncate
 router = APIRouter()
 
 
+_VALID_REPORT_TYPES = frozenset([
+    "GMP Inspection", "GCP Inspection", "GDP Inspection",
+    "Pharmacovigilance Audit", "Clinical Trial Site Audit",
+])
+
+
 class ReportRequest(BaseModel):
     text: str
     report_type: str = "GMP Inspection"
+
+    @field_validator("text")
+    @classmethod
+    def text_not_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError("text must not be empty")
+        return v
+
+    @field_validator("report_type")
+    @classmethod
+    def report_type_valid(cls, v):
+        if v not in _VALID_REPORT_TYPES:
+            raise ValueError(f"report_type must be one of: {', '.join(sorted(_VALID_REPORT_TYPES))}")
+        return v
 
 
 @router.post("/report")

@@ -8,6 +8,7 @@ Phone detection uses a 3-gate pipeline from india-ai-2026:
 """
 import re
 import math
+import threading
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
@@ -44,15 +45,26 @@ PATTERNS: List[Tuple[str, str]] = [
     # Bank account: exclude numbers preceded by '+' (phone country codes)
     ("Bank Account",    r"(?<!\+)(?<!\d)\d{11,18}(?!\d)"),
     ("IFSC Code",       r"\b[A-Z]{4}0[A-Z0-9]{6}\b"),
+    # Incident / near-miss / complaint report references (e.g. GMCH-NMI-2024-0089, IR-2024-001)
+    ("Incident Report", r"\b[A-Z]{2,6}-[A-Z]{2,6}-\d{4}-\d{3,8}\b"),
+    # Internal telephone extension numbers (e.g. Ext. 2241, Extn 442, x-7823)
+    ("Extension Number", r"\bExt(?:n)?\.?\s*\d{3,5}\b"),
 ]
 
-_TOKEN_COUNTERS: dict = {}
+_tl = threading.local()
+
+
+def _get_counters() -> dict:
+    if not hasattr(_tl, "counters"):
+        _tl.counters = {}
+    return _tl.counters
 
 
 def _make_token(category: str) -> str:
+    counters = _get_counters()
     key = category.replace(" ", "_").upper()
-    _TOKEN_COUNTERS[key] = _TOKEN_COUNTERS.get(key, 0) + 1
-    return f"[{key}_{_TOKEN_COUNTERS[key]:03d}]"
+    counters[key] = counters.get(key, 0) + 1
+    return f"[{key}_{counters[key]:03d}]"
 
 
 def _phone_context_ok(text: str, start: int) -> bool:
@@ -81,7 +93,7 @@ def _detect_phones(text: str) -> List[PIIMatch]:
     for m in re.finditer(r"(?<!\d)[6-9]\d{9}(?!\d)", text):
         val = m.group()
         start = m.start()
-        if _phone_context_ok(text, start) or _phone_fp_filter(text, start, val):
+        if _phone_context_ok(text, start) and _phone_fp_filter(text, start, val):
             matches.append(PIIMatch("Phone Number", val, start, m.end()))
     return matches
 
@@ -105,7 +117,7 @@ def rule_based_detect(text: str) -> List[PIIMatch]:
 
 
 def pseudonymise(text: str, matches: List[PIIMatch]) -> str:
-    _TOKEN_COUNTERS.clear()
+    _get_counters().clear()
     result = []
     prev = 0
     for m in sorted(matches, key=lambda x: x.start):

@@ -100,7 +100,7 @@ def read_as_dataframe(uploaded_file):
     return None
 
 
-def truncate(text: str, max_chars: int = 28000) -> str:
+def truncate(text: str, max_chars: int = 150000) -> str:
     if len(text) > max_chars:
         return text[:max_chars] + "\n\n[... truncated ...]"
     return text

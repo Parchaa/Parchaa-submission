@@ -1,6 +1,11 @@
 import { useState, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { generateReport, uploadFile } from '../lib/api'
+import {
+  ClipboardIcon, UploadIcon, AlertIcon, AlertTriangleIcon,
+  BuildingIcon, FileTextIcon, CheckIcon, CopyIcon, LightbulbIcon,
+  DownloadIcon,
+} from '../components/Icons'
 
 const REPORT_TYPES = [
   'GMP Inspection',
@@ -11,16 +16,62 @@ const REPORT_TYPES = [
 ]
 
 const COMPLIANCE_STYLE = {
-  'Compliant':              { badge: 'badge-green', color: 'var(--success)' },
-  'Conditionally Compliant':{ badge: 'badge-yellow', color: 'var(--warning)' },
-  'Non-Compliant':          { badge: 'badge-red',   color: 'var(--danger)' },
+  'Compliant':               { badge: 'badge-green',  color: 'var(--success)' },
+  'Conditionally Compliant': { badge: 'badge-yellow', color: 'var(--warning)' },
+  'Non-Compliant':           { badge: 'badge-red',    color: 'var(--danger)' },
 }
 
 const FINDING_STYLE = {
-  Critical:    { bg: 'var(--danger-bg)',  border: 'var(--danger)',  badge: 'badge-red' },
-  Major:       { bg: 'var(--warning-bg)', border: 'var(--warning)', badge: 'badge-yellow' },
-  Minor:       { bg: 'var(--accent-bg)',  border: 'var(--accent)',  badge: 'badge-blue' },
+  Critical:    { bg: 'var(--danger-bg)',  border: 'var(--danger)',       badge: 'badge-red' },
+  Major:       { bg: 'var(--warning-bg)', border: 'var(--warning)',      badge: 'badge-yellow' },
+  Minor:       { bg: 'var(--accent-bg)',  border: 'var(--accent)',       badge: 'badge-blue' },
   Observation: { bg: 'var(--bg-hover)',   border: 'var(--border-light)', badge: 'badge-purple' },
+}
+
+function buildReportText(result, reportType) {
+  const h = result.report_header || {}
+  const lines = [
+    '='.repeat(70),
+    'CENTRAL DRUGS STANDARD CONTROL ORGANISATION (CDSCO)',
+    'INSPECTION REPORT',
+    '='.repeat(70),
+    `Inspection Type : ${h.inspection_type || reportType}`,
+    `Facility        : ${h.facility_name || '—'}`,
+    `Address         : ${h.facility_address || '—'}`,
+    `Inspection Date : ${h.inspection_date || '—'}`,
+    `Report Date     : ${h.report_date || '—'}`,
+    `Inspectors      : ${(h.inspectors || []).join(', ') || '—'}`,
+    '',
+    'EXECUTIVE SUMMARY',
+    '-'.repeat(40),
+    result.executive_summary || '',
+    '',
+    `Compliance Status : ${result.gmp_compliance || '—'}`,
+    `Findings          : ${result.critical_findings_count || 0} Critical | ${result.major_findings_count || 0} Major | ${result.minor_findings_count || 0} Minor`,
+    '',
+    'DETAILED FINDINGS',
+    '-'.repeat(40),
+    ...(result.findings || []).flatMap(f => [
+      `\n[${f.finding_id}] ${f.category?.toUpperCase()} — Risk: ${f.risk_level}`,
+      `  Description    : ${f.description}`,
+      f.regulatory_reference ? `  Regulatory Ref : ${f.regulatory_reference}` : '',
+      f.proposed_capa ? `  CAPA           : ${f.proposed_capa}` : '',
+    ]).filter(Boolean),
+    '',
+    'OVERALL ASSESSMENT',
+    '-'.repeat(40),
+    result.overall_assessment || '',
+    '',
+    'RECOMMENDATIONS',
+    '-'.repeat(40),
+    ...(result.recommendations || []).map((r, i) => `  ${i + 1}. ${r}`),
+    '',
+    result.follow_up_required
+      ? `Follow-up Required: Yes — ${result.follow_up_timeline || 'TBD'}`
+      : 'Follow-up Required: No',
+    '='.repeat(70),
+  ]
+  return lines.join('\n')
 }
 
 export default function InspectionPage() {
@@ -63,42 +114,21 @@ export default function InspectionPage() {
 
   const copyReport = () => {
     if (!result) return
-    const h = result.report_header || {}
-    const lines = [
-      '='.repeat(70),
-      'CENTRAL DRUGS STANDARD CONTROL ORGANISATION (CDSCO)',
-      'INSPECTION REPORT',
-      '='.repeat(70),
-      `Inspection Type : ${h.inspection_type || reportType}`,
-      `Facility        : ${h.facility_name || '—'}`,
-      `Address         : ${h.facility_address || '—'}`,
-      `Inspection Date : ${h.inspection_date || '—'}`,
-      `Inspectors      : ${(h.inspectors || []).join(', ') || '—'}`,
-      '',
-      'EXECUTIVE SUMMARY',
-      '-'.repeat(40),
-      result.executive_summary || '',
-      '',
-      `GMP Compliance  : ${result.gmp_compliance || '—'}`,
-      `Findings        : ${result.critical_findings_count || 0} Critical | ${result.major_findings_count || 0} Major | ${result.minor_findings_count || 0} Minor`,
-      '',
-      'FINDINGS',
-      '-'.repeat(40),
-      ...(result.findings || []).flatMap(f => [
-        `\n[${f.finding_id}] ${f.category?.toUpperCase()} — Risk: ${f.risk_level}`,
-        `  ${f.description}`,
-        f.regulatory_reference ? `  Ref: ${f.regulatory_reference}` : '',
-        f.proposed_capa ? `  CAPA: ${f.proposed_capa}` : '',
-      ]).filter(Boolean),
-      '',
-      'OVERALL ASSESSMENT',
-      '-'.repeat(40),
-      result.overall_assessment || '',
-    ]
-    navigator.clipboard.writeText(lines.join('\n'))
+    navigator.clipboard.writeText(buildReportText(result, reportType))
   }
 
-  // backend field: report_header (not facility_info)
+  const downloadReport = () => {
+    if (!result) return
+    const content = buildReportText(result, reportType)
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `CDSCO_${reportType.replace(/\s+/g, '_')}_Report.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const header = result?.report_header || {}
 
   return (
@@ -110,10 +140,8 @@ export default function InspectionPage() {
         </p>
       </div>
 
-      <div className="two-col">
-        {/* ── Left ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div className="card">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="card">
             <div className="card-title"><UploadIcon />Inspection Notes</div>
             <div {...getRootProps()} className={`dropzone${isDragActive ? ' active' : ''}`} style={{ marginBottom: 12 }}>
               <input {...getInputProps()} />
@@ -138,11 +166,16 @@ export default function InspectionPage() {
             </div>
             <textarea
               className="form-textarea"
-              style={{ minHeight: 320 }}
+              style={{ minHeight: 260 }}
               placeholder={'Example raw notes:\n"Floor 2 storage room temp not maintained. Staff not wearing gloves. Batch record for Jan missing signature. Cross-contamination risk in packing area."'}
               value={text}
               onChange={e => setText(e.target.value)}
             />
+            {text.length > 150000 && (
+              <div className="alert alert-warning" style={{ marginTop: 8 }}>
+                <AlertIcon />Document exceeds 150,000 characters — content will be truncated before processing.
+              </div>
+            )}
             <button
               className="btn btn-primary btn-full"
               style={{ marginTop: 12 }}
@@ -152,12 +185,9 @@ export default function InspectionPage() {
               {loading ? <><div className="spinner" />Generating…</> : <><ClipboardIcon />Generate Report</>}
             </button>
             {error && <div className="alert alert-error" style={{ marginTop: 10 }}><AlertIcon />{error}</div>}
-          </div>
         </div>
 
-        {/* ── Right ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {loading && (
+        {loading && (
             <div className="card loading-center" style={{ minHeight: 200 }}>
               <div className="spinner spinner-lg" />
               <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Generating formal inspection report…</span>
@@ -166,7 +196,6 @@ export default function InspectionPage() {
 
           {result && !loading && (
             <>
-              {/* ── Report header bar ── */}
               <div className="card" style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                 <div>
                   <div style={{ fontWeight: 600, color: 'var(--text-heading)', fontSize: 14 }}>{header.inspection_type || reportType}</div>
@@ -182,11 +211,11 @@ export default function InspectionPage() {
                       {result.gmp_compliance}
                     </span>
                   )}
-                  <button className="btn btn-secondary btn-sm" onClick={copyReport}><CopyIcon />Copy Report</button>
+                  <button className="btn btn-secondary btn-sm" onClick={copyReport}><CopyIcon />Copy</button>
+                  <button className="btn btn-secondary btn-sm" onClick={downloadReport}><DownloadIcon />Download</button>
                 </div>
               </div>
 
-              {/* ── Facility info — from report_header ── */}
               {(header.facility_name || header.facility_address || header.inspection_date) && (
                 <div className="card">
                   <div className="card-title"><BuildingIcon />Facility Information</div>
@@ -207,7 +236,6 @@ export default function InspectionPage() {
                 </div>
               )}
 
-              {/* ── Executive summary ── */}
               {result.executive_summary && (
                 <div className="card">
                   <div className="card-title"><FileTextIcon />Executive Summary</div>
@@ -215,7 +243,6 @@ export default function InspectionPage() {
                 </div>
               )}
 
-              {/* ── Findings ── */}
               {result.findings?.length > 0 && (
                 <div className="card">
                   <div className="card-title"><AlertTriangleIcon />Findings</div>
@@ -251,7 +278,6 @@ export default function InspectionPage() {
                 </div>
               )}
 
-              {/* ── Overall assessment ── */}
               {result.overall_assessment && (
                 <div className="card">
                   <div className="card-title"><CheckIcon />Overall Assessment</div>
@@ -264,7 +290,6 @@ export default function InspectionPage() {
                 </div>
               )}
 
-              {/* ── Recommendations ── */}
               {result.recommendations?.length > 0 && (
                 <div className="card">
                   <div className="card-title"><LightbulbIcon />Recommendations</div>
@@ -281,26 +306,15 @@ export default function InspectionPage() {
             </>
           )}
 
-          {!result && !loading && (
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, gap: 12 }}>
-              <ClipboardIcon style={{ width: 40, height: 40, color: 'var(--text-dim)' }} />
-              <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                Paste raw inspection notes and generate a formal CDSCO report
-              </p>
-            </div>
-          )}
-        </div>
+        {!result && !loading && (
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 160, gap: 12 }}>
+            <ClipboardIcon size={40} style={{ color: 'var(--text-dim)' }} />
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+              Paste raw inspection notes and generate a formal CDSCO report
+            </p>
+          </div>
+        )}
       </div>
     </>
   )
 }
-
-function ClipboardIcon({ style }) { return <svg style={style} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> }
-function UploadIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> }
-function AlertIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> }
-function AlertTriangleIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
-function BuildingIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> }
-function FileTextIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> }
-function CheckIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> }
-function CopyIcon() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> }
-function LightbulbIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg> }

@@ -7,5 +7,8 @@ from fastapi import HTTPException
 
 def get_ai():
     if not GEMINI_API_KEY:
-        raise HTTPException(503, "GEMINI_API_KEY not set in .env")
-    return get_client(), get_model()
+        raise HTTPException(503, detail="GEMINI_API_KEY not configured — add it to .env and restart the server")
+    client = get_client()
+    if client is None:
+        raise HTTPException(503, detail="AI client failed to initialise — check GEMINI_API_KEY validity")
+    return client, get_model()

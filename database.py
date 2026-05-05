@@ -23,7 +23,7 @@ from typing import Optional, Dict, Any, List
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, DateTime,
-    ForeignKey, JSON, text
+    ForeignKey, JSON, text, UniqueConstraint
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.exc import OperationalError
@@ -54,12 +54,16 @@ class TokenRegistry(Base):
     An authorised officer can call /api/anonymize/reverse/{token} to retrieve
     the plaintext. The encryption key lives in .env (TOKEN_ENCRYPTION_KEY) and
     should be rotated through a key-management procedure.
+
+    Tokens like [PERSON_001] repeat across documents, so uniqueness is enforced
+    per (job_id, token) — not on token alone.
     """
     __tablename__ = "token_registry"
+    __table_args__ = (UniqueConstraint("job_id", "token", name="uq_token_per_job"),)
 
     id                 = Column(Integer, primary_key=True, autoincrement=True)
     job_id             = Column(String(64), ForeignKey("processing_jobs.job_id"), nullable=False)
-    token              = Column(String(256), nullable=False, index=True, unique=True)
+    token              = Column(String(256), nullable=False, index=True)
     entity_type        = Column(String(64))
     original_encrypted = Column(Text, nullable=False)   # Fernet(AES-128-CBC) ciphertext
     created_at         = Column(DateTime, default=datetime.utcnow)
@@ -133,7 +137,14 @@ def get_session() -> Optional[Session]:
 
 
 def is_connected() -> bool:
-    return _engine is not None
+    if _engine is None:
+        return False
+    try:
+        with _engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
 
 
 # ── Write helpers ────────────────────────────────────────────────────────────
@@ -178,8 +189,8 @@ def save_tokens(job_id: str, matches: List[Dict]) -> None:
                 encrypted = _encrypt(original)
             except Exception:
                 continue
-            # Upsert — don't fail if token already stored from a previous run
-            existing = session.query(TokenRegistry).filter_by(token=token).first()
+            # Upsert — skip if this (job_id, token) pair is already stored
+            existing = session.query(TokenRegistry).filter_by(job_id=job_id, token=token).first()
             if existing:
                 continue
             session.add(TokenRegistry(
@@ -195,16 +206,23 @@ def save_tokens(job_id: str, matches: List[Dict]) -> None:
         session.close()
 
 
-def decrypt_token(token: str) -> Optional[str]:
+def decrypt_token(token: str, job_id: Optional[str] = None) -> Optional[str]:
     """
     Reverse a pseudonymisation token → original value.
+    If job_id is provided, scopes lookup to that job. Otherwise returns the
+    most recent match (tokens like [PERSON_001] repeat across documents).
     Returns None if token not found or decryption fails.
     """
     session = get_session()
     if session is None:
         return None
     try:
-        row = session.query(TokenRegistry).filter_by(token=token).first()
+        q = session.query(TokenRegistry).filter(TokenRegistry.token == token)
+        if job_id:
+            q = q.filter(TokenRegistry.job_id == job_id)
+        else:
+            q = q.order_by(TokenRegistry.created_at.desc())
+        row = q.first()
         if row is None:
             return None
         return _decrypt(row.original_encrypted)

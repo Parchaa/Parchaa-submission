@@ -1,6 +1,11 @@
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { assessCompleteness, compareDocuments, uploadFile } from '../lib/api'
+import {
+  CheckIcon, CheckCircleIcon, XCircleIcon, AlertCircleIcon, MinusIcon,
+  ZapIcon, AlertIcon, ListIcon, LightbulbIcon, GitIcon, DiffIcon, CodeIcon,
+  DocAIcon, DocBIcon, CopyIcon, DownloadIcon,
+} from '../components/Icons'
 
 const CHECKLIST_TYPES = [
   'Clinical Trial Application',
@@ -9,16 +14,16 @@ const CHECKLIST_TYPES = [
 ]
 
 const STATUS_STYLE = {
-  Present:        { badge: 'badge-green', icon: <CheckCircleIcon /> },
-  Partial:        { badge: 'badge-yellow', icon: <AlertCircleIcon /> },
-  Missing:        { badge: 'badge-red', icon: <XCircleIcon /> },
+  Present:          { badge: 'badge-green',  icon: <CheckCircleIcon /> },
+  Partial:          { badge: 'badge-yellow', icon: <AlertCircleIcon /> },
+  Missing:          { badge: 'badge-red',    icon: <XCircleIcon /> },
   'Not Applicable': { badge: 'badge-purple', icon: <MinusIcon /> },
 }
 
 function ScoreBar({ pct }) {
-  const cls = pct >= 80 ? 'high' : pct >= 50 ? 'medium' : 'low'
-  const badgeCls = pct >= 80 ? 'badge-green' : pct >= 50 ? 'badge-yellow' : 'badge-red'
-  const label = pct >= 80 ? 'Complete' : pct >= 50 ? 'Mostly Complete' : 'Incomplete'
+  const cls      = pct >= 80 ? 'high'       : pct >= 50 ? 'medium'          : 'low'
+  const badgeCls = pct >= 80 ? 'badge-green' : pct >= 50 ? 'badge-yellow'   : 'badge-red'
+  const label    = pct >= 80 ? 'Complete'    : pct >= 50 ? 'Mostly Complete' : 'Incomplete'
   return (
     <div className="score-meter">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 8 }}>
@@ -32,8 +37,8 @@ function ScoreBar({ pct }) {
   )
 }
 
-function makeUploadDropzone(setter, setError) {
-  // Hook-free helper — caller must spread the props
+// Custom hook — wraps useDropzone with upload-on-drop behaviour
+function useUploadDropzone(setter, setError) {
   return useDropzone({
     onDrop: async (files) => {
       if (!files[0]) return
@@ -48,6 +53,58 @@ function makeUploadDropzone(setter, setError) {
   })
 }
 
+function formatResult(result) {
+  const sep = '='.repeat(60)
+  const sub = '-'.repeat(40)
+  const lines = [sep, 'CDSCO RegAI — Completeness & Comparison', sep, '']
+
+  if (result.type === 'completeness') {
+    const d = result.data
+    const pct = d.overall_completeness_pct ?? Math.round((d.score ?? 0) * 100)
+    lines.push(`Checklist Type   : ${d.checklist_type || ''}`)
+    lines.push(`Completeness     : ${pct}%`)
+    if (d.status)          lines.push(`Status           : ${d.status}`)
+    if (d.reviewer_action) lines.push(`Reviewer Action  : ${d.reviewer_action}`)
+    lines.push('')
+    if (d.items?.length) {
+      lines.push('CHECKLIST ITEMS', sub)
+      d.items.forEach(item => {
+        const mark = item.status === 'Present' ? '✓' : item.status === 'Partial' ? '~' : item.status === 'Not Applicable' ? '-' : '✗'
+        lines.push(`  [${mark}] ${item.item}${item.notes ? ` — ${item.notes}` : ''}  (${item.status})`)
+      })
+      lines.push('')
+    }
+    if (d.critical_missing?.length) {
+      lines.push('CRITICAL — MUST FIX BEFORE APPROVAL', sub)
+      d.critical_missing.forEach((m, i) => lines.push(`  ${i+1}. ${m}`))
+      lines.push('')
+    }
+    if (d.recommendations?.length) {
+      lines.push('RECOMMENDATIONS', sub)
+      d.recommendations.forEach((r, i) => lines.push(`  ${i+1}. ${r}`))
+      lines.push('')
+    }
+  } else {
+    const d = result.data
+    lines.push(`Overall Impact   : ${d.overall_impact || '—'}`)
+    lines.push(`Recommendation   : ${d.recommendation || '—'}`)
+    lines.push('')
+    if (d.change_summary) { lines.push('CHANGE SUMMARY', sub, d.change_summary, '') }
+    if (d.significant_changes?.length) {
+      lines.push('SIGNIFICANT CHANGES', sub)
+      d.significant_changes.forEach(c => {
+        lines.push(`  [${c.section}] ${c.type} — ${c.impact} Impact`)
+        lines.push(`    ${c.description}`)
+        if (c.regulatory_significance) lines.push(`    Regulatory: ${c.regulatory_significance}`)
+      })
+      lines.push('')
+    }
+    if (d.new_sections?.length)     { lines.push('ADDED SECTIONS', sub); d.new_sections.forEach(s => lines.push(`  + ${s}`)); lines.push('') }
+    if (d.removed_sections?.length) { lines.push('REMOVED SECTIONS', sub); d.removed_sections.forEach(s => lines.push(`  - ${s}`)); lines.push('') }
+  }
+  return lines.join('\n')
+}
+
 export default function CompletenessPage() {
   const [activeTab, setActiveTab] = useState('completeness')
   const [text, setText] = useState('')
@@ -58,9 +115,26 @@ export default function CompletenessPage() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
 
-  const dzText = makeUploadDropzone(setText, setError)
-  const dz1 = makeUploadDropzone(setDoc1, setError)
-  const dz2 = makeUploadDropzone(setDoc2, setError)
+  const dzText = useUploadDropzone(setText, setError)
+  const dz1    = useUploadDropzone(setDoc1, setError)
+  const dz2    = useUploadDropzone(setDoc2, setError)
+
+  const copyResult = () => {
+    if (!result) return
+    navigator.clipboard.writeText(formatResult(result))
+  }
+
+  const downloadResult = () => {
+    if (!result) return
+    const content = formatResult(result)
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `CDSCO_${result.type === 'completeness' ? 'Completeness' : 'Comparison'}_${Date.now()}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const run = async () => {
     setLoading(true)
@@ -103,65 +177,84 @@ export default function CompletenessPage() {
         </button>
       </div>
 
-      <div className="two-col">
-        {/* ── Left ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {activeTab === 'completeness' ? (
-            <div className="card">
-              <div className="card-title"><CheckIcon />Completeness Check</div>
-              <div className="form-group" style={{ marginBottom: 12 }}>
-                <label className="form-label">Checklist Type</label>
-                <select className="form-select" value={checklistType} onChange={e => setChecklistType(e.target.value)}>
-                  {CHECKLIST_TYPES.map(t => <option key={t}>{t}</option>)}
-                </select>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* ── Input section ── */}
+        {activeTab === 'completeness' ? (
+          <div className="card">
+            <div className="card-title"><CheckIcon />Completeness Check</div>
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label className="form-label">Checklist Type</label>
+              <select className="form-select" value={checklistType} onChange={e => setChecklistType(e.target.value)}>
+                {CHECKLIST_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div {...dzText.getRootProps()} className={`dropzone${dzText.isDragActive ? ' active' : ''}`} style={{ marginBottom: 10 }}>
+              <input {...dzText.getInputProps()} />
+              <div className="dropzone-text">Drop or <span>browse</span></div>
+              <div className="dropzone-hint">PDF · DOCX · TXT</div>
+            </div>
+            <textarea
+              className="form-textarea"
+              style={{ minHeight: 200 }}
+              placeholder="Paste the submission document text…"
+              value={text}
+              onChange={e => setText(e.target.value)}
+            />
+            {text.length > 150000 && (
+              <div className="alert alert-warning" style={{ marginTop: 8 }}>
+                <AlertIcon />Document exceeds 150,000 characters — content will be truncated before processing.
               </div>
-              <div {...dzText.getRootProps()} className={`dropzone${dzText.isDragActive ? ' active' : ''}`} style={{ marginBottom: 10 }}>
-                <input {...dzText.getInputProps()} />
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="card">
+              <div className="card-title"><DocAIcon />Version 1 (Original)</div>
+              <div {...dz1.getRootProps()} className={`dropzone${dz1.isDragActive ? ' active' : ''}`} style={{ marginBottom: 10 }}>
+                <input {...dz1.getInputProps()} />
                 <div className="dropzone-text">Drop or <span>browse</span></div>
                 <div className="dropzone-hint">PDF · DOCX · TXT</div>
               </div>
-              <textarea
-                className="form-textarea"
-                style={{ minHeight: 200 }}
-                placeholder="Paste the submission document text…"
-                value={text}
-                onChange={e => setText(e.target.value)}
-              />
+              <textarea className="form-textarea" style={{ minHeight: 180 }} placeholder="Paste original version…" value={doc1} onChange={e => setDoc1(e.target.value)} />
+              {doc1.length > 150000 && (
+                <div className="alert alert-warning" style={{ marginTop: 8 }}>
+                  <AlertIcon />Version 1 exceeds 150,000 characters — will be truncated.
+                </div>
+              )}
             </div>
-          ) : (
-            <>
-              <div className="card">
-                <div className="card-title"><DocAIcon />Version 1 (Original)</div>
-                <div {...dz1.getRootProps()} className={`dropzone${dz1.isDragActive ? ' active' : ''}`} style={{ marginBottom: 10 }}>
-                  <input {...dz1.getInputProps()} />
-                  <div className="dropzone-text">Drop or <span>browse</span></div>
-                  <div className="dropzone-hint">PDF · DOCX · TXT</div>
-                </div>
-                <textarea className="form-textarea" style={{ minHeight: 200 }} placeholder="Paste original version…" value={doc1} onChange={e => setDoc1(e.target.value)} />
+            <div className="card">
+              <div className="card-title"><DocBIcon />Version 2 (Revised)</div>
+              <div {...dz2.getRootProps()} className={`dropzone${dz2.isDragActive ? ' active' : ''}`} style={{ marginBottom: 10 }}>
+                <input {...dz2.getInputProps()} />
+                <div className="dropzone-text">Drop or <span>browse</span></div>
+                <div className="dropzone-hint">PDF · DOCX · TXT</div>
               </div>
-              <div className="card">
-                <div className="card-title"><DocBIcon />Version 2 (Revised)</div>
-                <div {...dz2.getRootProps()} className={`dropzone${dz2.isDragActive ? ' active' : ''}`} style={{ marginBottom: 10 }}>
-                  <input {...dz2.getInputProps()} />
-                  <div className="dropzone-text">Drop or <span>browse</span></div>
-                  <div className="dropzone-hint">PDF · DOCX · TXT</div>
+              <textarea className="form-textarea" style={{ minHeight: 180 }} placeholder="Paste revised version…" value={doc2} onChange={e => setDoc2(e.target.value)} />
+              {doc2.length > 150000 && (
+                <div className="alert alert-warning" style={{ marginTop: 8 }}>
+                  <AlertIcon />Version 2 exceeds 150,000 characters — will be truncated.
                 </div>
-                <textarea className="form-textarea" style={{ minHeight: 200 }} placeholder="Paste revised version…" value={doc2} onChange={e => setDoc2(e.target.value)} />
-              </div>
-            </>
-          )}
+              )}
+            </div>
+          </>
+        )}
 
-          <button className="btn btn-primary btn-full" onClick={run} disabled={loading || !canRun}>
-            {loading
-              ? <><div className="spinner" />Analysing…</>
-              : <><ZapIcon />{activeTab === 'completeness' ? 'Check Completeness' : 'Compare Versions'}</>
-            }
-          </button>
-          {error && <div className="alert alert-error"><AlertIcon />{error}</div>}
-        </div>
+        <button className="btn btn-primary btn-full" onClick={run} disabled={loading || !canRun}>
+          {loading
+            ? <><div className="spinner" />Analysing…</>
+            : <><ZapIcon />{activeTab === 'completeness' ? 'Check Completeness' : 'Compare Versions'}</>
+          }
+        </button>
+        {error && <div className="alert alert-error"><AlertIcon />{error}</div>}
 
-        {/* ── Right ── */}
+        {/* ── Results section ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {result && !loading && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn btn-secondary btn-sm" onClick={copyResult}><CopyIcon />Copy result</button>
+              <button className="btn btn-secondary btn-sm" onClick={downloadResult}><DownloadIcon />Download .txt</button>
+            </div>
+          )}
           {loading && (
             <div className="card loading-center" style={{ minHeight: 200 }}>
               <div className="spinner spinner-lg" />
@@ -172,7 +265,6 @@ export default function CompletenessPage() {
           {/* ── Completeness results ── */}
           {result?.type === 'completeness' && !loading && (() => {
             const d = result.data
-            // backend returns overall_completeness_pct (0-100 integer)
             const pct = d.overall_completeness_pct ?? Math.round((d.score ?? 0) * 100)
             return (
               <>
@@ -183,7 +275,6 @@ export default function CompletenessPage() {
                   {d.reviewer_action && <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--accent-bg)', borderRadius: 6, fontSize: 12, color: 'var(--accent)', borderLeft: '3px solid var(--accent)' }}>{d.reviewer_action}</div>}
                 </div>
 
-                {/* Checklist items — backend returns d.items */}
                 {d.items?.length > 0 && (
                   <div className="card">
                     <div className="card-title"><ListIcon />Checklist — Item by Item</div>
@@ -207,7 +298,6 @@ export default function CompletenessPage() {
                   </div>
                 )}
 
-                {/* Critical missing — backend returns d.critical_missing */}
                 {d.critical_missing?.length > 0 && (
                   <div className="card">
                     <div className="card-title" style={{ color: 'var(--danger)' }}><XCircleIcon />Critical — Must Fix Before Approval</div>
@@ -241,7 +331,6 @@ export default function CompletenessPage() {
           {/* ── Comparison results ── */}
           {result?.type === 'compare' && !loading && (() => {
             const d = result.data
-            const impactColor = { Major: 'var(--danger)', Moderate: 'var(--warning)', Minor: 'var(--success)' }
             return (
               <>
                 <div className="card">
@@ -278,7 +367,6 @@ export default function CompletenessPage() {
                   </div>
                 )}
 
-                {/* Unified diff */}
                 {result.data.diff_lines?.length > 0 && (
                   <div className="card">
                     <div className="card-title"><CodeIcon />Line Diff</div>
@@ -296,7 +384,7 @@ export default function CompletenessPage() {
                   </div>
                 )}
 
-                {(d.new_sections?.length > 0 || d.removed_sections?.length > 0 || d.data_changes?.length > 0) && (
+                {(d.new_sections?.length > 0 || d.removed_sections?.length > 0) && (
                   <div className="card">
                     <div className="card-title"><ListIcon />Section Changes</div>
                     {d.new_sections?.length > 0 && (
@@ -318,8 +406,8 @@ export default function CompletenessPage() {
           })()}
 
           {!result && !loading && (
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, gap: 12 }}>
-              <CheckIcon style={{ width: 40, height: 40, color: 'var(--text-dim)' }} />
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 160, gap: 12 }}>
+              <CheckIcon size={40} style={{ color: 'var(--text-dim)' }} />
               <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Results will appear here</p>
             </div>
           )}
@@ -328,18 +416,3 @@ export default function CompletenessPage() {
     </>
   )
 }
-
-function CheckIcon({ style }) { return <svg style={style} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> }
-function CheckCircleIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> }
-function XCircleIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> }
-function AlertCircleIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> }
-function MinusIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg> }
-function DocAIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg> }
-function DocBIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="17" x2="8" y2="17"/></svg> }
-function ZapIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> }
-function ListIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/></svg> }
-function AlertIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> }
-function GitIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg> }
-function DiffIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg> }
-function CodeIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg> }
-function LightbulbIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg> }

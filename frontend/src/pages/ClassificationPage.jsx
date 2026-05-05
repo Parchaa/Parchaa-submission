@@ -1,8 +1,11 @@
 import { useState, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { classify, detectDuplicate, classifyBatch, uploadFile } from '../lib/api'
+import {
+  TagIcon, LayersIcon, ZapIcon, CopyIcon, PlusIcon, XSmallIcon,
+  AlertIcon, CheckIcon, InfoIcon, DownloadIcon, UploadIcon,
+} from '../components/Icons'
 
-// ICH E2A / CDSCO severity classes
 const SEV_STYLE = {
   'Death':                           { badge: 'badge-red',    urgent: true },
   'Life-Threatening':                { badge: 'badge-red',    urgent: true },
@@ -20,6 +23,48 @@ const PRIORITY_STYLE = {
   LOW:    { color: 'var(--success)', bg: 'var(--success-bg)' },
 }
 
+function formatSingleResult(d) {
+  const sep = '='.repeat(60)
+  const sub = '-'.repeat(40)
+  const lines = [sep, 'CDSCO RegAI — SAE Classification', sep, '',
+    `Case ID          : ${d.case_id || '—'}`,
+    `Severity Class   : ${d.severity_class || '—'}`,
+    `Priority         : ${d.priority || '—'}`,
+    `Outcome          : ${d.outcome || '—'}`,
+    `Suspect Drug     : ${d.drug_suspect || '—'}`,
+    `MedDRA Term      : ${d.event_pt || '—'}`,
+    `Causality        : ${d.causality_assessment || '—'}`,
+    `Severity Score   : ${d.severity_score ? `${d.severity_score}/10` : '—'}`,
+    '',
+  ]
+  if (d.seriousness_criteria?.length) { lines.push('SERIOUSNESS CRITERIA (ICH E2A)', sub); d.seriousness_criteria.forEach(c => lines.push(`  · ${c}`)); lines.push('') }
+  if (d.flags?.length) { lines.push('SPECIAL FLAGS', sub); d.flags.forEach(f => lines.push(`  · ${f}`)); lines.push('') }
+  if (d.reviewer_priority_notes) { lines.push('REVIEWER NOTES', sub, d.reviewer_priority_notes, '') }
+  if (d.duplicate_indicators?.length) { lines.push(`DUPLICATE RISK: ${d.duplicate_risk}`, sub); d.duplicate_indicators.forEach(di => lines.push(`  · ${di}`)); lines.push('') }
+  return lines.join('\n')
+}
+
+function formatBatchResult(rows) {
+  const sep = '='.repeat(60)
+  const sub = '-'.repeat(40)
+  const lines = [sep, 'CDSCO RegAI — Batch SAE Classification', sep, '']
+  rows.forEach((r, i) => {
+    lines.push(`REPORT ${i+1}${r.case_id ? ` — ${r.case_id}` : ''}`, sub)
+    lines.push(`  Severity Class   : ${r.severity_class || '—'}`)
+    lines.push(`  Priority         : ${r.priority || '—'}`)
+    lines.push(`  Severity Score   : ${r.severity_score ? `${r.severity_score}/10` : '—'}`)
+    lines.push(`  Outcome          : ${r.outcome || '—'}`)
+    lines.push(`  Suspect Drug     : ${r.drug_suspect || '—'}`)
+    lines.push(`  MedDRA Term      : ${r.event_pt || '—'}`)
+    lines.push(`  Causality        : ${r.causality_assessment || '—'}`)
+    if (r.seriousness_criteria?.length) lines.push(`  Seriousness      : ${r.seriousness_criteria.join('; ')}`)
+    if (r.flags?.length)               lines.push(`  Flags            : ${r.flags.join(', ')}`)
+    if (r.potential_duplicate_of?.length) lines.push(`  Possible Dup of  : #${r.potential_duplicate_of.map(x => x+1).join(', ')} (${r.duplicate_confidence})`)
+    lines.push('')
+  })
+  return lines.join('\n')
+}
+
 export default function ClassificationPage() {
   const [activeTab, setActiveTab] = useState('single')
   const [text, setText] = useState('')
@@ -35,7 +80,55 @@ export default function ClassificationPage() {
     catch { setError('Upload failed') }
   }, [])
 
+  const onDropDupA = useCallback(async (files) => {
+    if (!files[0]) return
+    try { const { text: t } = await uploadFile(files[0]); setText(t) }
+    catch { setError('Upload failed') }
+  }, [])
+
+  const onDropDupB = useCallback(async (files) => {
+    if (!files[0]) return
+    try { const { text: t } = await uploadFile(files[0]); setText2(t) }
+    catch { setError('Upload failed') }
+  }, [])
+
+  const uploadBatchSlot = async (files, idx) => {
+    if (!files[0]) return
+    try {
+      const { text: t } = await uploadFile(files[0])
+      setBatchTexts(bt => { const next = [...bt]; next[idx] = t; return next })
+    } catch { setError('Upload failed') }
+  }
+
+  const copyResult = () => {
+    if (!result) return
+    const txt = result.type === 'single'
+      ? formatSingleResult(result.data)
+      : result.type === 'batch'
+      ? formatBatchResult(result.data)
+      : `Duplicate: ${result.data.is_duplicate ? 'Yes' : 'No'} — Blended score: ${Math.round((result.data.similarity_score ?? 0) * 100)}%\n${result.data.reasoning || ''}`
+    navigator.clipboard.writeText(txt)
+  }
+
+  const downloadResult = () => {
+    if (!result) return
+    const txt = result.type === 'single'
+      ? formatSingleResult(result.data)
+      : result.type === 'batch'
+      ? formatBatchResult(result.data)
+      : `Duplicate: ${result.data.is_duplicate ? 'Yes' : 'No'} — Blended score: ${Math.round((result.data.similarity_score ?? 0) * 100)}%\n${result.data.reasoning || ''}`
+    const blob = new Blob([txt], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `CDSCO_SAE_${result.type}_${Date.now()}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop: onDropSingle, multiple: false })
+  const { getRootProps: getDupARootProps, getInputProps: getDupAInputProps, isDragActive: isDupADrag } = useDropzone({ onDrop: onDropDupA, multiple: false })
+  const { getRootProps: getDupBRootProps, getInputProps: getDupBInputProps, isDragActive: isDupBDrag } = useDropzone({ onDrop: onDropDupB, multiple: false })
 
   const run = async () => {
     setLoading(true)
@@ -51,7 +144,6 @@ export default function ClassificationPage() {
       } else {
         const reports = batchTexts.filter(t => t.trim())
         const r = await classifyBatch(reports)
-        // backend returns array directly
         setResult({ type: 'batch', data: Array.isArray(r) ? r : r.results ?? [] })
       }
     } catch (e) {
@@ -92,93 +184,132 @@ export default function ClassificationPage() {
         ))}
       </div>
 
-      <div className="two-col">
-        {/* ── Left: input ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {activeTab === 'single' && (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* ── Input section ── */}
+        {activeTab === 'single' && (
+          <div className="card">
+            <div className="card-title"><TagIcon />SAE Report</div>
+            <div {...getRootProps()} className={`dropzone${isDragActive ? ' active' : ''}`} style={{ marginBottom: 12 }}>
+              <input {...getInputProps()} />
+              <div className="dropzone-text">Drop file or <span>browse</span></div>
+              <div className="dropzone-hint">PDF · DOCX · TXT</div>
+            </div>
+            <textarea
+              className="form-textarea"
+              style={{ minHeight: 240 }}
+              placeholder="Paste SAE report text. The tool will extract case ID, severity class, causality, MedDRA term, and priority…"
+              value={text}
+              onChange={e => setText(e.target.value)}
+            />
+            {text.length > 150000 && (
+              <div className="alert alert-warning" style={{ marginTop: 8 }}>
+                <AlertIcon />Report exceeds 150,000 characters — content will be truncated before processing.
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'duplicate' && (
+          <>
             <div className="card">
-              <div className="card-title"><TagIcon />SAE Report</div>
-              <div {...getRootProps()} className={`dropzone${isDragActive ? ' active' : ''}`} style={{ marginBottom: 12 }}>
-                <input {...getInputProps()} />
+              <div className="card-title"><TagIcon />Report A</div>
+              <div {...getDupARootProps()} className={`dropzone${isDupADrag ? ' active' : ''}`} style={{ marginBottom: 10 }}>
+                <input {...getDupAInputProps()} />
                 <div className="dropzone-text">Drop file or <span>browse</span></div>
                 <div className="dropzone-hint">PDF · DOCX · TXT</div>
               </div>
-              <textarea
-                className="form-textarea"
-                style={{ minHeight: 300 }}
-                placeholder="Paste SAE report text. The tool will extract case ID, severity class, causality, MedDRA term, and priority…"
-                value={text}
-                onChange={e => setText(e.target.value)}
-              />
+              <textarea className="form-textarea" style={{ minHeight: 180 }} placeholder="Paste first SAE report…" value={text} onChange={e => setText(e.target.value)} />
+              {text.length > 50000 && (
+                <div className="alert alert-warning" style={{ marginTop: 8 }}>
+                  <AlertIcon />Report A exceeds 50,000 characters — will be truncated.
+                </div>
+              )}
             </div>
-          )}
-
-          {activeTab === 'duplicate' && (
-            <>
-              <div className="card">
-                <div className="card-title"><TagIcon />Report A</div>
-                <textarea className="form-textarea" style={{ minHeight: 200 }} placeholder="Paste first SAE report…" value={text} onChange={e => setText(e.target.value)} />
-              </div>
-              <div className="card">
-                <div className="card-title"><TagIcon />Report B</div>
-                <textarea className="form-textarea" style={{ minHeight: 200 }} placeholder="Paste second SAE report…" value={text2} onChange={e => setText2(e.target.value)} />
-              </div>
-              <div className="alert alert-info">
-                <InfoIcon />
-                TF-IDF cosine pre-filter (fast): if score &lt;0.2 the reports are distinct without calling AI. Otherwise blended score = 0.4×cosine + 0.6×AI; duplicate if ≥0.80.
-              </div>
-            </>
-          )}
-
-          {activeTab === 'batch' && (
             <div className="card">
-              <div className="card-title" style={{ justifyContent: 'space-between' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><LayersIcon />Batch Reports</span>
-                <button className="btn btn-secondary btn-sm" onClick={() => setBatchTexts(t => [...t, ''])}>
-                  <PlusIcon />Add Report
-                </button>
+              <div className="card-title"><TagIcon />Report B</div>
+              <div {...getDupBRootProps()} className={`dropzone${isDupBDrag ? ' active' : ''}`} style={{ marginBottom: 10 }}>
+                <input {...getDupBInputProps()} />
+                <div className="dropzone-text">Drop file or <span>browse</span></div>
+                <div className="dropzone-hint">PDF · DOCX · TXT</div>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {batchTexts.map((t, i) => (
-                  <div key={i}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Report {i + 1}</span>
+              <textarea className="form-textarea" style={{ minHeight: 180 }} placeholder="Paste second SAE report…" value={text2} onChange={e => setText2(e.target.value)} />
+              {text2.length > 50000 && (
+                <div className="alert alert-warning" style={{ marginTop: 8 }}>
+                  <AlertIcon />Report B exceeds 50,000 characters — will be truncated.
+                </div>
+              )}
+            </div>
+            <div className="alert alert-info">
+              <InfoIcon />
+              TF-IDF cosine pre-filter (fast): if score &lt;0.2 the reports are distinct without calling AI. Otherwise blended score = 0.4×cosine + 0.6×AI; duplicate if ≥0.80.
+            </div>
+          </>
+        )}
+
+        {activeTab === 'batch' && (
+          <div className="card">
+            <div className="card-title" style={{ justifyContent: 'space-between' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><LayersIcon />Batch Reports</span>
+              <button className="btn btn-secondary btn-sm" onClick={() => setBatchTexts(t => [...t, ''])}>
+                <PlusIcon />Add Report
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {batchTexts.map((t, i) => (
+                <div key={i}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Report {i + 1}</span>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <label style={{ cursor: 'pointer', fontSize: 11, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <UploadIcon size={12} />Browse
+                        <input type="file" accept=".pdf,.docx,.txt" style={{ display: 'none' }}
+                          onChange={e => uploadBatchSlot(Array.from(e.target.files), i)} />
+                      </label>
                       {batchTexts.length > 2 && (
                         <button className="btn btn-ghost btn-sm" style={{ padding: '2px 6px' }} onClick={() => setBatchTexts(bt => bt.filter((_, j) => j !== i))}>
-                          <XIcon />
+                          <XSmallIcon />
                         </button>
                       )}
                     </div>
-                    <textarea
-                      className="form-textarea"
-                      style={{ minHeight: 90 }}
-                      placeholder={`SAE report ${i + 1}…`}
-                      value={t}
-                      onChange={e => { const next = [...batchTexts]; next[i] = e.target.value; setBatchTexts(next) }}
-                    />
                   </div>
-                ))}
-              </div>
+                  <textarea
+                    className="form-textarea"
+                    style={{ minHeight: 90 }}
+                    placeholder={`SAE report ${i + 1}…`}
+                    value={t}
+                    onChange={e => { const next = [...batchTexts]; next[i] = e.target.value; setBatchTexts(next) }}
+                  />
+                  {t.length > 15000 && (
+                    <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 4 }}>
+                      ⚠ Report {i + 1} exceeds 15,000 characters — will be truncated.
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <button className="btn btn-primary btn-full" onClick={run} disabled={loading || !canRun}>
+          {loading
+            ? <><div className="spinner" />Classifying…</>
+            : <><ZapIcon />{activeTab === 'batch' ? 'Classify All' : activeTab === 'duplicate' ? 'Check Duplicate' : 'Classify Report'}</>
+          }
+        </button>
+        {error && <div className="alert alert-error"><AlertIcon />{error}</div>}
+
+        {/* ── Results section ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {result && !loading && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn btn-secondary btn-sm" onClick={copyResult}><CopyIcon />Copy result</button>
+              <button className="btn btn-secondary btn-sm" onClick={downloadResult}><DownloadIcon />Download .txt</button>
             </div>
           )}
-
-          <button className="btn btn-primary btn-full" onClick={run} disabled={loading || !canRun}>
-            {loading
-              ? <><div className="spinner" />Classifying…</>
-              : <><ZapIcon />{activeTab === 'batch' ? 'Classify All' : activeTab === 'duplicate' ? 'Check Duplicate' : 'Classify Report'}</>
-            }
-          </button>
-          {error && <div className="alert alert-error"><AlertIcon />{error}</div>}
-        </div>
-
-        {/* ── Right: results ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {loading && <div className="card loading-center" style={{ minHeight: 200 }}><div className="spinner spinner-lg" /></div>}
 
-          {/* ── Single result ── */}
           {result?.type === 'single' && !loading && (() => {
             const d = result.data
-            // backend field: severity_class (not severity)
             const sevStyle = SEV_STYLE[d.severity_class] || { badge: 'badge-blue', urgent: false }
             const priStyle = PRIORITY_STYLE[d.priority] || PRIORITY_STYLE.MEDIUM
             return (
@@ -208,7 +339,6 @@ export default function ClassificationPage() {
                     ))}
                   </div>
 
-                  {/* Reviewer priority notes — backend field name */}
                   {d.reviewer_priority_notes && (
                     <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 14px', fontSize: 13, lineHeight: 1.6, color: 'var(--text)', borderLeft: '3px solid var(--accent)' }}>
                       {d.reviewer_priority_notes}
@@ -251,13 +381,11 @@ export default function ClassificationPage() {
             )
           })()}
 
-          {/* ── Duplicate result ── */}
           {result?.type === 'duplicate' && !loading && (() => {
             const d = result.data
-            // backend fields: is_duplicate, similarity_score (blended), cosine_similarity, matching_elements, differing_elements
-            const isDup = d.is_duplicate
+            const isDup   = d.is_duplicate
             const blended = Math.round((d.similarity_score ?? 0) * 100)
-            const cosine = Math.round((d.cosine_similarity ?? 0) * 100)
+            const cosine  = Math.round((d.cosine_similarity ?? 0) * 100)
             return (
               <div className="card">
                 <div className="card-title" style={{ justifyContent: 'space-between' }}>
@@ -269,9 +397,9 @@ export default function ClassificationPage() {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
                   {[
-                    ['Blended Score', `${blended}%`, blended >= 80 ? 'var(--danger)' : 'var(--text-heading)'],
-                    ['Cosine (TF-IDF)', `${cosine}%`, 'var(--text-heading)'],
-                    ['Matching Fields', d.matching_elements?.length ?? 0, 'var(--text-heading)'],
+                    ['Blended Score',   `${blended}%`, blended >= 80 ? 'var(--danger)' : 'var(--text-heading)'],
+                    ['Cosine (TF-IDF)', `${cosine}%`,  'var(--text-heading)'],
+                    ['Matching Fields',  d.matching_elements?.length ?? 0, 'var(--text-heading)'],
                     ['Differing Fields', d.differing_elements?.length ?? 0, 'var(--text-heading)'],
                   ].map(([l, v, col]) => (
                     <div key={l} style={{ background: 'var(--bg-input)', borderRadius: 6, padding: '8px 12px' }}>
@@ -308,7 +436,6 @@ export default function ClassificationPage() {
             )
           })()}
 
-          {/* ── Batch result ── */}
           {result?.type === 'batch' && !loading && (
             <div className="card">
               <div className="card-title"><LayersIcon />Batch Results — {result.data.length} Reports</div>
@@ -316,12 +443,7 @@ export default function ClassificationPage() {
                 <table>
                   <thead>
                     <tr>
-                      <th>#</th>
-                      <th>Case ID</th>
-                      <th>Severity</th>
-                      <th>Priority</th>
-                      <th>Outcome</th>
-                      <th>Possible Dup</th>
+                      <th>#</th><th>Case ID</th><th>Severity</th><th>Priority</th><th>Suspect Drug</th><th>MedDRA Term</th><th>Causality</th><th>Outcome</th><th>Dup?</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -334,11 +456,14 @@ export default function ClassificationPage() {
                           <td style={{ fontSize: 12, color: 'var(--text-heading)', fontWeight: 500 }}>{r.case_id || '—'}</td>
                           <td><span className={`badge ${sevStyle.badge}`} style={{ fontSize: 10 }}>{r.severity_class || '—'}</span></td>
                           <td><span style={{ fontSize: 11, fontWeight: 600, color: priStyle.color }}>{r.priority}</span></td>
+                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.drug_suspect || '—'}</td>
+                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.event_pt || '—'}</td>
+                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.causality_assessment || '—'}</td>
                           <td style={{ fontSize: 12 }}>{r.outcome || '—'}</td>
                           <td>
                             {r.potential_duplicate_of?.length > 0
                               ? <span className="badge badge-yellow" style={{ fontSize: 10 }}>#{r.potential_duplicate_of.map(x => x + 1).join(', ')} ({r.duplicate_confidence})</span>
-                              : <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>None</span>
+                              : <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>—</span>
                             }
                           </td>
                         </tr>
@@ -351,8 +476,8 @@ export default function ClassificationPage() {
           )}
 
           {!result && !loading && (
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, gap: 12 }}>
-              <TagIcon style={{ width: 40, height: 40, color: 'var(--text-dim)' }} />
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 160, gap: 12 }}>
+              <TagIcon size={40} style={{ color: 'var(--text-dim)' }} />
               <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Classification results will appear here</p>
             </div>
           )}
@@ -361,13 +486,3 @@ export default function ClassificationPage() {
     </>
   )
 }
-
-function TagIcon({ style }) { return <svg style={style} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> }
-function LayersIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg> }
-function ZapIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> }
-function CopyIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> }
-function PlusIcon() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> }
-function XIcon() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> }
-function AlertIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> }
-function CheckIcon() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> }
-function InfoIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> }

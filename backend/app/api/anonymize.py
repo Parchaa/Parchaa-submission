@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.deps import get_ai
 from modules.anonymizer import run_anonymisation
 from utils.file_handler import truncate
@@ -9,7 +9,21 @@ router = APIRouter()
 
 class AnonymizeRequest(BaseModel):
     text: str
-    mode: str = "pseudonymise"   # "pseudonymise" | "full"
+    mode: str = "pseudonymise"
+
+    @field_validator("text")
+    @classmethod
+    def text_not_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError("text must not be empty")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def mode_valid(cls, v):
+        if v not in ("pseudonymise", "full"):
+            raise ValueError("mode must be 'pseudonymise' or 'full'")
+        return v
 
 
 @router.post("/anonymize")
