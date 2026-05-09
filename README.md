@@ -1,17 +1,25 @@
 # CDSCO RegAI — Regulatory Workflow Automation
 
+🔗 **Live Demo Video**  
+URL: [Google Drive Link](https://drive.google.com/file/d/1sDSLntKyjKVsFOEm6Q_wfQ0oEHNnl2gW/view?usp=sharing)
+
+🔐 **Demo Credentials**  
+The live application is protected to prevent abuse of the AI models. For access credentials, please contact **kinjal@panscience.ai**.
+
 CDSCO RegAI is an advanced AI-powered platform designed to automate and streamline regulatory workflows for the Central Drugs Standard Control Organisation (CDSCO). It leverages state-of-the-art Large Language Models to process, analyze, and manage regulatory documents such as Clinical Trial Applications, New Drug Applications, and Serious Adverse Event (SAE) reports.
 
 ## 🚀 Features
 
 The application offers multiple AI-driven capabilities:
 
-1. **Document Classification & Extraction**: Automatically classifies uploaded documents and extracts critical metadata (e.g., application type, applicant details, risk level) using LLMs.
-2. **Completeness Check**: Validates submission documents against CDSCO-specific regulatory checklists, identifying missing components, generating completeness scores, and highlighting critical gaps.
-3. **Document Comparison**: Compares different versions of regulatory documents (e.g., original vs. revised protocols) and generates a structural diff highlighting regulatory impact.
-4. **Intelligent Summarisation**: Generates concise, structured summaries of lengthy regulatory dossiers, extracting key findings, risks, and conclusions.
-5. **PII Anonymisation**: Redacts Personally Identifiable Information (PII) from clinical trial documents or SAE reports to ensure data privacy and compliance.
-6. **Inspection Report Generation**: Analyzes inspection notes and automatically drafts structured, compliant inspection reports ready for review.
+1. **Secure Authentication & Access Control**: Robust login system securing API endpoints and UI, ensuring only authorised personnel can access sensitive regulatory data.
+2. **Document Classification & Extraction**: Automatically classifies uploaded documents and extracts critical metadata (e.g., application type, risk level) using LLMs, with full field transparency and "Mark as Duplicate" human overrides based on dynamic similarity sliders.
+3. **Completeness Check**: Validates submission documents against CDSCO checklists, generating scores with transparent mathematical visualisations and a human-in-the-loop "Mark as Complete" override.
+4. **Semantic Document Comparison**: Compares different versions of regulatory documents generating a semantic change analysis, paired with an interactive side-by-side split-pane UI that visually highlights line-level differences.
+5. **Intelligent Summarisation & Q&A Chatbot**: Generates structured summaries of lengthy dossiers and features a contextual "Ask a Question" chatbot allowing reviewers to interactively query the document's contents.
+6. **PII Anonymisation**: Redacts PII/PHI via a 3-layer pipeline for DPDP Act compliance. Authorised users can securely download the original, unredacted PDF, demonstrating verifiable reversibility.
+7. **Inspection Report Generation**: Analyzes field notes and automatically drafts structured, compliant inspection reports, exporting directly to multi-sheet `.xlsx` workbooks complete with Risk Registers.
+8. **Workflow Persistence (History)**: An integrated History module and per-tab persistence ensure that reviewers never lose their recent analysis results when switching tasks.
 
 ## 🏗️ Architecture
 
@@ -117,15 +125,24 @@ cdsco_app/
 - LLM API Key
 
 ### 1. Environment Configuration
+
+#### Backend Variables
 Create a `.env` file in the root directory (use `.env.example` as a template):
 ```env
-API_KEY=your_api_key
-MODEL_NAME=your_model_name
+GEMINI_API_KEY=your_llm_api_key
+GEMINI_MODEL=your_llm_model_name
 DATABASE_URL=postgresql://user:password@localhost:5432/cdsco_regai
+TOKEN_ENCRYPTION_KEY=your_base64_fernet_key
 AWS_ACCESS_KEY_ID=your_aws_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret
 AWS_REGION=ap-south-1
 S3_BUCKET=your_s3_bucket
+```
+
+#### Frontend Variables
+Create a `.env` file inside the `frontend/` directory:
+```env
+VITE_APP_ADMIN_PASSWORD=your_secure_password
 ```
 
 ### 2. Backend Setup

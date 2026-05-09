@@ -12,8 +12,8 @@ export default function LoginPage({ onLogin }) {
     // Find user (Admin only for now per requirement)
     const user = USERS.find(u => u.email === email)
     
-    // Hardcoded password validation for demonstration
-    if (user && user.role === 'admin' && password === 'CdsC0_R3gA!_2026#Secure') {
+    // Password validation using environment variable
+    if (user && user.role === 'admin' && password === import.meta.env.VITE_APP_ADMIN_PASSWORD) {
       onLogin(user)
     } else {
       setError('Invalid admin credentials. Please try again.')

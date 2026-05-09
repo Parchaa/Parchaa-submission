@@ -1,4 +1,4 @@
-I still# CDSCO RegAI — Full Technical Documentation
+# CDSCO RegAI — Full Technical Documentation
 
 **India-AI Health Innovation Hackathon 2026**
 **Team / Submitter:** sneha@nyaayai.com
@@ -86,7 +86,7 @@ Microsoft Presidio with the `en_core_web_lg` spaCy model performs Named Entity R
 A **geographic allowlist** prevents over-redaction of non-identifying public geography: country names (India) and all 28 Indian states/8 Union Territories are preserved. Street addresses, localities, and city names remain redacted because they can identify individuals when combined with other fields.
 
 **Layer 3 — LLM Contextual Analysis (`anonymizer.py`)**
-This layer uses Gemini 2.5 Flash to identify quasi-identifiers that rules cannot find, such as employment details, specific lab value patterns, and facility names.
+This layer uses an advanced LLM to identify quasi-identifiers that rules cannot find, such as employment details, specific lab value patterns, and facility names.
 
 **Direct PDF Redaction Pipeline (`utils/presidio_engine.py`)**
 The system supports a "PDF-in, PDF-out" workflow:
@@ -356,7 +356,7 @@ All evaluation is qualitative — the system has not been tested against a label
 2. **Document quality dependency** — scanned PDFs without OCR post-processing or audio recordings with poor transcription quality significantly degrade all modules.
 3. **English-only processing** — the pipeline handles English text only. Regional language content (Hindi, Tamil, Telugu) in forms or ICFs is not processed.
 4. **No real-time progress streaming** — processing a large document (200+ pages) can take 10–30 seconds; no intermediate progress feedback is shown during this time.
-5. **API-dependent throughput** — all LLM calls depend on the Gemini API. Latency and rate limits are determined by the API provider, not the application.
+5. **API-dependent throughput** — all LLM calls depend on the external LLM API. Latency and rate limits are determined by the API provider, not the application.
 
 ---
 
@@ -450,9 +450,9 @@ All evaluation is qualitative — the system has not been tested against a label
 │  │  │ TF-IDF cos  │       │ Geo allowlist    │     │ mammoth   │   │   │
 │  │  └─────────────┘       └──────────────────┘     └───────────┘   │   │
 │  │                                                                    │   │
-│  │  gemini_client.py                                                 │   │
+│  │  llm_client.py                                                    │   │
 │  │  ┌──────────────────────────────────────────────────────────┐    │   │
-│  │  │  Gemini LLM API  (JSON output mode, 3-attempt retry)     │    │   │
+│  │  │  Advanced LLM API (JSON output mode, 3-attempt retry)    │    │   │
 │  │  │  Used by: Layer 3 anonymisation · summarisation ·         │    │   │
 │  │  │           completeness · comparison · classification      │    │   │
 │  │  │           · inspection report generation                  │    │   │
@@ -491,7 +491,7 @@ All evaluation is qualitative — the system has not been tested against a label
 | Storage | AWS S3 | — | Document storage, India region (`ap-south-1`) |
 | SSL | Let's Encrypt + Certbot | — | Auto-renewing TLS certificates |
 | Process Mgmt | systemd | — | Service lifecycle management and auto-restart |
-| LLM | Gemini API | 2.5 Flash | Structured JSON generation for all AI modules |
+| LLM | Advanced LLM API | High-Capacity Model | Structured JSON generation for all AI modules |
 
 ---
 
@@ -583,7 +583,7 @@ The module calculates a quantitative health score for applications:
 > "Duplicate ICSRs inflate adverse event counts and distort safety signal analysis. Our two-stage detection uses TF-IDF cosine similarity as a fast pre-filter — if two reports are clearly different, we reject instantly without any AI call. If they're semantically similar, the AI does a deep field-by-field comparison and produces a blended score. The threshold is 0.80 — set to minimise both false positives and missed duplicates."
 
 ### On Architecture (for technical questions)
-> "The backend is FastAPI with Uvicorn workers, running as a systemd service. Nginx handles SSL termination and static file serving. Every API call is logged to PostgreSQL with timing, giving a complete audit trail. Token encryption is AES-128-CBC Fernet. The entire stack is hosted in the AWS India region. The AI layer is the Gemini API with domain-specific prompting — we use prompt engineering rather than custom model training, which keeps the system immediately deployable and maintainable without ML infrastructure."
+> "The backend is FastAPI with Uvicorn workers, running as a systemd service. Nginx handles SSL termination and static file serving. Every API call is logged to PostgreSQL with timing, giving a complete audit trail. Token encryption is AES-128-CBC Fernet. The entire stack is hosted in the AWS India region. The AI layer is an advanced LLM API with domain-specific prompting — we use prompt engineering rather than custom model training, which keeps the system immediately deployable and maintainable without ML infrastructure."
 
 ### On Limitations (be proactive)
 > "We are transparent about what this system cannot do yet. It has not been validated against a labelled ICSR corpus, so precision and recall figures are qualitative. It processes English only — regional language support is on the roadmap. The AI layer is probabilistic — it will not catch 100% of edge cases. And throughput is dependent on the LLM API. The roadmap includes OCR integration, expanded checklist support, and a feedback loop from reviewer corrections."
