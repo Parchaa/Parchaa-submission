@@ -69,13 +69,23 @@ EMPLOYMENT & CONTEXTUAL IDENTIFIERS:
 - Language/dialect specifics combined with location ("patient speaks Marathi only, wife speaks some Hindi")
 
 DO NOT flag:
-- [TOKEN_NNN] placeholders already in the text
+- Anything that is already inside a [TOKEN_NNN] placeholder — NEVER extract a substring that contains "[" or "]" characters or digits that are part of an existing token
 - Generic drug names, general diagnosis labels, common medical abbreviations
+- Scientific document metadata: DOI numbers, ISSN numbers, journal volume/issue/page numbers, publication years, citation reference numbers
+- URLs, website addresses, journal names
+
+=== CRITICAL RULE — TOKEN INTEGRITY ===
+The text already contains tokens like [PERSON_001], [DATE_TIME_023], [LOCATION_005] etc.
+You MUST NOT:
+- Extract any value that overlaps with or contains part of an existing token
+- Extract standalone digits or short numbers that appear as part of journal/scientific references
+- Extract years (e.g. 2024, 2025) as lab values
+- Extract DOI components, ISSN digits, page numbers, or volume numbers
 
 === OUTPUT FORMAT ===
 For each detection:
   "category": one of [Facility_ID, Reference_Number, Lab_Value, Scheme_ID, Clinical_PHI, Employment, Other_PHI]
-  "value": exact substring from the text — must be copy-paste exact
+  "value": exact substring from the text — must be copy-paste exact, must NOT contain "[" or "]"
   "replacement": UPPERCASE_SNAKE_CASE token (e.g. FACILITY_NAME, SCHEME_CARD, INCIDENT_REF, EXTENSION_NUMBER, LAB_VALUE, CLINICAL_PARAMS)
 
 Return a JSON array. Return [] if nothing found. Return ONLY valid JSON, no commentary, no markdown fences.
@@ -126,13 +136,18 @@ EMPLOYMENT & CONTEXTUAL IDENTIFIERS:
 - Language/dialect specifics → "a regional language"
 
 DO NOT flag:
-- [TOKEN_NNN] placeholders already in the text
+- Anything inside or overlapping with existing [TOKEN_NNN] placeholders — never extract values containing "[" or "]"
 - Generic drug names, general diagnosis labels
+- Scientific metadata: DOI numbers, ISSN numbers, journal volume/issue/page numbers, years, URLs, citation numbers
+
+=== CRITICAL RULE — TOKEN INTEGRITY ===
+Never extract a value that contains brackets or digits that form part of an existing token.
+Never treat years (2024, 2025), DOI fragments, page numbers, or ISSN digits as PHI.
 
 === OUTPUT FORMAT ===
 For each detection:
   "category": one of [Facility_ID, Reference_Number, Lab_Value, Scheme_ID, Clinical_PHI, Employment, Other_PHI]
-  "value": exact substring from the text — must be copy-paste exact
+  "value": exact substring from the text — must be copy-paste exact, must NOT contain "[" or "]"
   "replacement": natural language generalisation that reads naturally when substituted in context (no all-caps, no brackets — the code will wrap it)
 
 Return a JSON array. Return [] if nothing found. Return ONLY valid JSON, no commentary, no markdown fences.
@@ -220,15 +235,33 @@ def run_anonymisation(text: str, client, model_name: str, mode: str = "pseudonym
         raw = re.sub(r"^```(?:json)?", "", raw).rstrip("`").strip()
         layer3_matches = json.loads(raw) if raw else []
         for item in layer3_matches:
-            if isinstance(item, dict) and item.get("value") and item.get("replacement"):
-                step1_text = step1_text.replace(item["value"], f"[{item['replacement']}]")
+            if not isinstance(item, dict):
+                continue
+            val = item.get("value", "")
+            rep = item.get("replacement", "")
+            if not val or not rep:
+                continue
+            # Skip if value contains brackets — it overlaps with an existing token
+            if "[" in val or "]" in val:
+                continue
+            step1_text = step1_text.replace(val, f"[{rep}]")
     except Exception:
         pass
+
+    # ── Token integrity repair ────────────────────────────────────────────
+    # If Layer 3 still managed to tokenise digits inside an existing token,
+    # producing e.g. [URL_01[LAB_VALUE]] or [PERSON_0[LAB_VALUE]], fix them.
+    step1_text = re.sub(r'\[([A-Z_/]+)_(\d*)\[([A-Z_]+)\]\]', r'[\1_0\2]', step1_text)
+    step1_text = re.sub(r'\[([A-Z_/]+)_\[([A-Z_]+)\](\d+)\]', r'[\1_\3]', step1_text)
 
     # ── Step 2: Irreversible anonymisation ────────────────────────────────
     final_text = step1_text
     if mode == "full":
         final_text = irreversible_anonymise(step1_text)
+        # Remove token numbers: [PERSON_001] → [PERSON], [DATE_TIME_003] → [DATE_TIME].
+        # Numbered tokens reveal entity frequency/cardinality; full anonymisation
+        # must destroy that information. No mapping is stored for full mode (see below).
+        final_text = re.sub(r'\[([A-Z][A-Z_/]*)_\d{3}\]', r'[\1]', final_text)
 
     # ── Build entity list for UI ──────────────────────────────────────────
     all_entities = []
@@ -270,15 +303,18 @@ def run_anonymisation(text: str, client, model_name: str, mode: str = "pseudonym
             duration_ms=duration_ms,
         )
 
-        # All tokens that can be reversed: Layer 1 (value stored) + Layer 2 (text stored)
-        all_token_records = [
-            {"value": m.value, "token": m.token, "category": m.category}
-            for m in rule_matches if m.token
-        ] + [
-            {"value": e.get("text", ""), "token": e.get("token", ""), "category": e.get("entity_type", "")}
-            for e in layer2_entities if e.get("token")
-        ]
-        save_tokens(job_id, all_token_records)
+        # Only store reversal mappings for pseudonymisation.
+        # Full anonymisation is irreversible by design — storing the mapping
+        # would make it pseudonymisation, not full anonymisation.
+        if mode != "full":
+            all_token_records = [
+                {"value": m.value, "token": m.token, "category": m.category}
+                for m in rule_matches if m.token
+            ] + [
+                {"value": e.get("text", ""), "token": e.get("token", ""), "category": e.get("entity_type", "")}
+                for e in layer2_entities if e.get("token")
+            ]
+            save_tokens(job_id, all_token_records)
 
         save_result(job_id, "anonymisation", {
             "total_entities": len(all_entities),

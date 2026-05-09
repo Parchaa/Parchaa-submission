@@ -24,11 +24,63 @@ _REG_REFS = {
     ),
 }
 
+# Inspection area codes per CDSCO inspection SOP QMS-INS-004
+_INSPECTION_AREAS = {
+    "GMP Inspection": [
+        "Pharmaceutical Quality System / QMS",
+        "Personnel",
+        "Premises, Equipment & Utilities",
+        "Documentation",
+        "Production & Process Monitoring",
+        "Quality Control",
+    ],
+    "GCP Inspection": [
+        "Protocol & Amendments",
+        "Informed Consent",
+        "Subject Records & Case Report Forms",
+        "Investigational Product Management",
+        "Ethics Committee Oversight",
+        "Investigator Qualifications & Training",
+        "Safety Reporting",
+    ],
+    "GDP Inspection": [
+        "Storage Conditions & Temperature Control",
+        "Documentation & Traceability",
+        "Transportation & Cold Chain",
+        "Personnel & Training",
+        "Returns & Recalls",
+    ],
+    "Pharmacovigilance Audit": [
+        "SAE / ICSR Reporting Procedures",
+        "Signal Detection & Management",
+        "PSUR / DSUR Preparation",
+        "Qualified Person for Pharmacovigilance (QPPV)",
+        "Training & SOPs",
+    ],
+    "Clinical Trial Site Audit": [
+        "Protocol Compliance & Eligibility",
+        "Informed Consent Process",
+        "Source Document Verification",
+        "Investigational Product Accountability",
+        "SAE Reporting",
+        "Ethics Committee Communication",
+    ],
+}
+
 PROMPT = """You are a CDSCO-qualified pharmaceutical inspector writing a formal inspection report for official submission.
 Convert the raw observations below into a structured report following CDSCO's standard format.
 
 Inspection Type: {inspection_type}
 Applicable Regulations: {reg_refs}
+Standard Inspection Areas for this type: {inspection_areas}
+
+=== SCOPE OF INSPECTION ===
+Extract the following scope details from the observations:
+- systems_covered: which of the standard inspection areas were reviewed
+- product_types: specific product categories / dosage forms inspected
+- manufacturing_lines: specific lines, rooms, or units visited (or trial sites for GCP)
+- inspection_dates: date or date range of the inspection
+- summary: one sentence describing what was in scope
 
 === FINDING CLASSIFICATION DEFINITIONS ===
 Critical    — deficiency likely to result in a serious risk to patient safety or public health; falsification of data; systemic failure that invalidates product batches or trial data; requires immediate action
@@ -48,6 +100,10 @@ Use a code that indicates the area, e.g.:
   OBS-TEMP-001 (Temperature / storage — for GMP/GDP)
   OBS-LABEL-001(Labelling)
   OBS-QC-001   (Quality control / testing)
+  OBS-QMS-001  (Quality Management System)
+  OBS-PROD-001 (Production / manufacturing process)
+  OBS-PERS-001 (Personnel / qualification)
+  OBS-PREM-001 (Premises / equipment)
 
 === DESCRIPTION QUALITY STANDARD ===
 Each finding description must:
@@ -83,22 +139,42 @@ Return ONLY valid JSON, no markdown, no commentary:
     "inspectors": ["Inspector Name — designation/organisation"],
     "report_date": "date report finalised"
   }},
+  "scope": {{
+    "systems_covered": ["system 1", "system 2"],
+    "product_types": ["product/dosage form 1"],
+    "manufacturing_lines": ["line or unit 1"],
+    "inspection_dates": "date or date range",
+    "summary": "one sentence scope description"
+  }},
   "executive_summary": "3-4 sentences: what was inspected, key deficiency themes, overall compliance conclusion, and immediate implications",
   "findings": [
     {{
       "finding_id": "OBS-XXX-001",
       "category": "Critical"|"Major"|"Minor"|"Observation",
-      "description": "specific finding per quality standard above",
-      "regulatory_reference": "exact rule/section/clause violated",
+      "area": "inspection area",
+      "description": "detailed observation",
+      "regulatory_reference": "rule violated",
       "risk_level": "High"|"Medium"|"Low",
-      "corrective_action_required": true|false,
-      "proposed_capa": "immediate action + root cause investigation + preventive measure + timeline"
+      "proposed_capa": "corrective action plan"
     }}
   ],
   "gmp_compliance": "Compliant"|"Conditionally Compliant"|"Non-Compliant",
   "critical_findings_count": integer,
   "major_findings_count": integer,
   "minor_findings_count": integer,
+  "risk_assessment": [
+    {{
+      "risk_id": "RSK-001",
+      "risk_title": "short title",
+      "event_statement": "Cause -> Event -> Impact",
+      "likelihood": 1-5,
+      "severity": 1-5,
+      "detectability": 1-5,
+      "risk_priority_score": integer (likelihood * severity * detectability),
+      "controls": "existing controls",
+      "action_plan": "recommended recovery actions"
+    }}
+  ],
   "overall_assessment": "2-3 sentences on systemic compliance posture, risk to subjects/data, and any patterns across findings",
   "recommendations": ["specific actionable recommendation — name the responsible party and timeline"],
   "follow_up_required": true|false,
@@ -112,9 +188,11 @@ Raw Observations:
 
 def generate_inspection_report(text: str, report_type: str, client, model_name: str) -> dict:
     reg_refs = _REG_REFS.get(report_type, _REG_REFS["GMP Inspection"])
+    areas = ", ".join(_INSPECTION_AREAS.get(report_type, []))
     prompt = PROMPT.format(
         inspection_type=report_type,
         reg_refs=reg_refs,
+        inspection_areas=areas,
         text=text[:150000],
     )
     result = call_gemini(client, model_name, prompt, fallback={"error": "Report generation failed"})
@@ -129,6 +207,7 @@ def generate_inspection_report(text: str, report_type: str, client, model_name: 
 
 def format_report_as_text(report: dict) -> str:
     h = report.get("report_header", {})
+    sc = report.get("scope", {})
     lines = [
         "=" * 70,
         "CENTRAL DRUGS STANDARD CONTROL ORGANISATION (CDSCO)",
@@ -140,6 +219,23 @@ def format_report_as_text(report: dict) -> str:
         f"Inspection Date : {h.get('inspection_date','N/A')}",
         f"Report Date     : {h.get('report_date','N/A')}",
         f"Inspectors      : {', '.join(h.get('inspectors',[])) or 'N/A'}",
+    ]
+
+    if sc:
+        lines += [
+            "",
+            "SCOPE OF INSPECTION",
+            "-" * 40,
+            f"  {sc.get('summary', '')}",
+        ]
+        if sc.get("systems_covered"):
+            lines.append(f"  Systems Covered : {', '.join(sc['systems_covered'])}")
+        if sc.get("product_types"):
+            lines.append(f"  Products        : {', '.join(sc['product_types'])}")
+        if sc.get("manufacturing_lines"):
+            lines.append(f"  Lines/Units     : {', '.join(sc['manufacturing_lines'])}")
+
+    lines += [
         "",
         "EXECUTIVE SUMMARY",
         "-" * 40,
@@ -156,6 +252,7 @@ def format_report_as_text(report: dict) -> str:
     for f in report.get("findings", []):
         lines += [
             f"\n[{f.get('finding_id','')}] {f.get('category','').upper()} — Risk: {f.get('risk_level','')}",
+            f"  Area           : {f.get('area','')}",
             f"  Description    : {f.get('description','')}",
             f"  Regulatory Ref : {f.get('regulatory_reference','')}",
         ]
@@ -172,3 +269,93 @@ def format_report_as_text(report: dict) -> str:
     lines.append(f"\nFollow-up: {'Yes — ' + report.get('follow_up_timeline','') if fu else 'No'}")
     lines.append("=" * 70)
     return "\n".join(lines)
+
+
+def format_report_as_xlsx(report: dict) -> bytes:
+    import io
+    import pandas as pd
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # 1. Summary Sheet
+        h = report.get("report_header", {})
+        sc = report.get("scope", {})
+        summary_data = [
+            ["CENTRAL DRUGS STANDARD CONTROL ORGANISATION (CDSCO)", ""],
+            ["INSPECTION REPORT SUMMARY", ""],
+            ["", ""],
+            ["Inspection Type", h.get("inspection_type", "N/A")],
+            ["Facility Name", h.get("facility_name", "N/A")],
+            ["Address", h.get("facility_address", "N/A")],
+            ["Inspection Date", h.get("inspection_date", "N/A")],
+            ["Report Date", h.get("report_date", "N/A")],
+            ["Inspectors", ", ".join(h.get("inspectors", []))],
+            ["", ""],
+            ["EXECUTIVE SUMMARY", ""],
+            [report.get("executive_summary", ""), ""],
+            ["", ""],
+            ["COMPLIANCE STATUS", report.get("gmp_compliance", "N/A")],
+            ["Critical Findings", report.get("critical_findings_count", 0)],
+            ["Major Findings", report.get("major_findings_count", 0)],
+            ["Minor Findings", report.get("minor_findings_count", 0)],
+        ]
+        df_summary = pd.DataFrame(summary_data)
+        df_summary.to_excel(writer, sheet_name="Report Summary", index=False, header=False)
+
+        # 2. Detailed Findings Sheet
+        findings = report.get("findings", [])
+        if findings:
+            df_findings = pd.DataFrame(findings)
+            # Rename columns for better readability
+            col_map = {
+                "finding_id": "ID", "category": "Category", "area": "Inspection Area",
+                "description": "Observation Description", "regulatory_reference": "Regulatory Reference",
+                "risk_level": "Risk Level", "proposed_capa": "Proposed CAPA"
+            }
+            df_findings = df_findings.rename(columns=col_map)[[c for c in col_map.values() if c in df_findings.rename(columns=col_map).columns]]
+            df_findings.to_excel(writer, sheet_name="Detailed Findings", index=False)
+
+        # 3. Risk Register Sheet (matching the Denso style)
+        risk_data = report.get("risk_assessment", [])
+        if risk_data:
+            df_risk = pd.DataFrame(risk_data)
+            col_map_risk = {
+                "risk_id": "Risk ID", "risk_title": "Risk Title", 
+                "event_statement": "Risk Event Statement (Cause → Event → Impact)",
+                "likelihood": "Likelihood (1-5)", "severity": "Severity (1-5)", 
+                "detectability": "Detectability (1-5)", "risk_priority_score": "Risk Priority Score",
+                "controls": "Controls (Prevent/Detect)", "action_plan": "Action Plan (Correct/Recover)"
+            }
+            df_risk = df_risk.rename(columns=col_map_risk)
+            df_risk.to_excel(writer, sheet_name="Risk Register", index=False)
+
+        # Basic styling via openpyxl
+        workbook = writer.book
+        # Style Summary
+        ws_sum = workbook["Report Summary"]
+        ws_sum.column_dimensions['A'].width = 30
+        ws_sum.column_dimensions['B'].width = 80
+        for cell in ws_sum[1]: cell.font = Font(bold=True, size=14)
+        for cell in ws_sum[2]: cell.font = Font(bold=True, size=12)
+
+        # Style Findings
+        if "Detailed Findings" in workbook.sheetnames:
+            ws_find = workbook["Detailed Findings"]
+            for cell in ws_find[1]: 
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color="4F8EF7", end_color="4F8EF7", fill_type="solid")
+            for col in ws_find.columns:
+                ws_find.column_dimensions[col[0].column_letter].width = 25
+
+        # Style Risk Register
+        if "Risk Register" in workbook.sheetnames:
+            ws_risk = workbook["Risk Register"]
+            for cell in ws_risk[1]:
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color="161B2E", end_color="161B2E", fill_type="solid")
+            for col in ws_risk.columns:
+                ws_risk.column_dimensions[col[0].column_letter].width = 20
+
+    return output.getvalue()
+

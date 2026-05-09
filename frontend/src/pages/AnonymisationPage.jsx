@@ -1,9 +1,9 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { anonymize, uploadFile } from '../lib/api'
+import { anonymize, uploadFile, anonymizePdf } from '../lib/api'
 import {
   ShieldIcon, UploadIcon, EditIcon, CheckIcon, CopyIcon, DownloadIcon,
-  LayersIcon, HashIcon, AlertIcon,
+  LayersIcon, HashIcon, AlertIcon, InfoIcon
 } from '../components/Icons'
 
 const LAYER_STYLE = {
@@ -15,8 +15,44 @@ const LAYER_STYLE = {
 const LAYER_KEYS = ['1 — Regex', '2 — Presidio/NER', '3 — AI Model']
 const TRUNCATE_LIMIT = 150000
 
+// IndexedDB helpers for storing the uploaded file across refreshes
+const DB_NAME = 'cdsco_files_db'
+const STORE_NAME = 'files'
+
+function saveFileToDB(file) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1)
+    req.onupgradeneeded = e => e.target.result.createObjectStore(STORE_NAME)
+    req.onsuccess = e => {
+      const db = e.target.result
+      const tx = db.transaction(STORE_NAME, 'readwrite')
+      tx.objectStore(STORE_NAME).put(file, 'lastUploadedFile')
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    }
+    req.onerror = () => reject(req.error)
+  })
+}
+
+function getFileFromDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1)
+    req.onupgradeneeded = e => e.target.result.createObjectStore(STORE_NAME)
+    req.onsuccess = e => {
+      const db = e.target.result
+      if (!db.objectStoreNames.contains(STORE_NAME)) return resolve(null)
+      const tx = db.transaction(STORE_NAME, 'readonly')
+      const getReq = tx.objectStore(STORE_NAME).get('lastUploadedFile')
+      getReq.onsuccess = () => resolve(getReq.result)
+      getReq.onerror = () => reject(getReq.error)
+    }
+    req.onerror = () => reject(req.error)
+  })
+}
+
 function LayerNavigator({ grouped }) {
   const [activeIdx, setActiveIdx] = useState(0)
+  const [showFlowOverlay, setShowFlowOverlay] = useState(false)
   const keys = LAYER_KEYS.filter(k => grouped[k]?.length > 0)
   if (keys.length === 0) return null
 
@@ -33,10 +69,89 @@ function LayerNavigator({ grouped }) {
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <LayersIcon />Detected Entities
         </span>
-        <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-          {keys.reduce((sum, k) => sum + (grouped[k]?.length || 0), 0)} total across {keys.length} layer{keys.length !== 1 ? 's' : ''}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button 
+            className="btn btn-secondary" 
+            style={{ padding: '4px 10px', fontSize: '11px' }}
+            onClick={() => setShowFlowOverlay(true)}
+          >
+            <InfoIcon size={12} /> View Pipeline Flow
+          </button>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            {keys.reduce((sum, k) => sum + (grouped[k]?.length || 0), 0)} total across {keys.length} layer{keys.length !== 1 ? 's' : ''}
+          </span>
+        </div>
       </div>
+
+      {showFlowOverlay && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '20px'
+        }} onClick={() => setShowFlowOverlay(false)}>
+          <div style={{
+            background: 'var(--bg-card)', padding: '28px', borderRadius: '16px',
+            width: '100%', maxWidth: '650px', boxShadow: 'var(--shadow)',
+            position: 'relative', border: '1px solid var(--border)'
+          }} onClick={e => e.stopPropagation()}>
+            <button 
+              onClick={() => setShowFlowOverlay(false)} 
+              style={{ position: 'absolute', top: 16, right: 16, background: 'var(--bg-hover)', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >✕</button>
+            
+            <h3 style={{ marginTop: 0, color: 'var(--text-heading)', fontSize: '18px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <LayersIcon /> 3-Layer Hybrid Pipeline
+            </h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '24px', lineHeight: 1.6 }}>
+              The text flows sequentially through three specialised filters. Each layer operates on the output of the previous layer, catching what standard models miss.
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {/* Layer 1 */}
+              <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', borderLeft: '4px solid var(--accent)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--accent)' }}>Layer 1: Deterministic Regex</div>
+                  <span className="badge badge-blue">Speed: Instant</span>
+                </div>
+                <div style={{ fontSize: '13px', color: 'var(--text)', marginBottom: 8 }}>Fast pattern matching. Catches highly structured formats.</div>
+                <div style={{ fontSize: '12px', fontFamily: 'monospace', color: 'var(--text-muted)', background: 'var(--bg-card)', padding: '6px 10px', borderRadius: 6, border: '1px dashed var(--border)' }}>
+                  Email: <span style={{color:'var(--text-heading)'}}>motherprasanna@rediffmail.com</span> <span style={{color:'var(--text-dim)'}}>|</span> Pincode: <span style={{color:'var(--text-heading)'}}>249203</span> <span style={{color:'var(--text-dim)'}}>|</span> Passport: <span style={{color:'var(--text-heading)'}}>e1000367</span>
+                </div>
+              </div>
+              
+              <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: '20px', lineHeight: '12px' }}>↓</div>
+
+              {/* Layer 2 */}
+              <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', borderLeft: '4px solid var(--success)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--success)' }}>Layer 2: Presidio NER (spaCy)</div>
+                  <span className="badge badge-green">Speed: Fast</span>
+                </div>
+                <div style={{ fontSize: '13px', color: 'var(--text)', marginBottom: 8 }}>Statistical NLP. Catches standard named entities via contextual models.</div>
+                <div style={{ fontSize: '12px', fontFamily: 'monospace', color: 'var(--text-muted)', background: 'var(--bg-card)', padding: '6px 10px', borderRadius: 6, border: '1px dashed var(--border)' }}>
+                  Person: <span style={{color:'var(--text-heading)'}}>Kumar Panda</span> <span style={{color:'var(--text-dim)'}}>|</span> Location: <span style={{color:'var(--text-heading)'}}>Pleasanton</span> <span style={{color:'var(--text-dim)'}}>|</span> Phone: <span style={{color:'var(--text-heading)'}}>+1-925-3991568</span> <span style={{color:'var(--text-dim)'}}>|</span> Diagnosis: <span style={{color:'var(--text-heading)'}}>history of progressive weight loss...</span>
+                </div>
+              </div>
+
+              <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: '20px', lineHeight: '12px' }}>↓</div>
+
+              {/* Layer 3 */}
+              <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px', borderLeft: '4px solid var(--purple)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--purple)' }}>Layer 3: AI Contextual Analysis (LLM)</div>
+                  <span className="badge badge-purple">Speed: Variable</span>
+                </div>
+                <div style={{ fontSize: '13px', color: 'var(--text)', marginBottom: 8 }}>Deep contextual understanding. Catches implicit PHI requiring medical domain knowledge.</div>
+                <div style={{ fontSize: '12px', fontFamily: 'monospace', color: 'var(--text-muted)', background: 'var(--bg-card)', padding: '6px 10px', borderRadius: 6, border: '1px dashed var(--border)', lineHeight: '1.8' }}>
+                  Facility: <span style={{color:'var(--text-heading)'}}>All India Institute of Medical Sciences, Rishikesh</span> <span style={{color:'var(--text-dim)'}}>|</span> Clinical: <span style={{color:'var(--text-heading)'}}>50 kg to 35 kg (30% in 3 months)</span> <br/>
+                  Lab Value: <span style={{color:'var(--text-heading)'}}>3325 copies/mL</span> <span style={{color:'var(--text-dim)'}}>|</span> Scheme: <span style={{color:'var(--text-heading)'}}>government of India National Acquired Immunodeficiency...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Layer tab bar */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -145,9 +260,13 @@ export default function AnonymisationPage() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [lastFile, setLastFile] = useState(null)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
 
   const onDrop = useCallback(async (files) => {
     if (!files[0]) return
+    setLastFile(files[0])
+    saveFileToDB(files[0]).catch(e => console.warn('Failed to save file to DB:', e))
     setUploading(true)
     setError('')
     try {
@@ -159,6 +278,27 @@ export default function AnonymisationPage() {
       setUploading(false)
     }
   }, [])
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('cdsco_last_anonymisation')
+      if (saved) {
+        const { result: r, mode: m } = JSON.parse(saved)
+        if (r) { setResult(r); if (m) setMode(m) }
+      }
+    } catch {}
+
+    // Restore last file from IndexedDB
+    getFileFromDB().then(file => {
+      if (file) setLastFile(file)
+    }).catch(e => console.warn('Failed to restore file from DB:', e))
+  }, [])
+
+  useEffect(() => {
+    if (result) {
+      try { localStorage.setItem('cdsco_last_anonymisation', JSON.stringify({ result, mode })) } catch {}
+    }
+  }, [result, mode])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -230,6 +370,27 @@ export default function AnonymisationPage() {
     a.download = `CDSCO_Anonymised_${Date.now()}.txt`
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  const downloadPdfResult = async () => {
+    if (!lastFile || lastFile.type !== 'application/pdf') {
+      setError('PDF Redaction is only available for PDF uploads.')
+      return
+    }
+    setDownloadingPdf(true)
+    try {
+      const blob = await anonymizePdf(lastFile, mode)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `redacted_${lastFile.name}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError('PDF Redaction failed: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setDownloadingPdf(false)
+    }
   }
 
   const grouped = result
@@ -330,9 +491,33 @@ export default function AnonymisationPage() {
                 <button className="btn btn-secondary btn-sm" onClick={downloadResult}>
                   <DownloadIcon />Download .txt
                 </button>
+                {lastFile?.type === 'application/pdf' && (
+                  <>
+                    <button 
+                      className="btn btn-accent btn-sm" 
+                      onClick={downloadPdfResult} 
+                      disabled={downloadingPdf}
+                    >
+                      {downloadingPdf ? <><div className="spinner" />Redacting...</> : <><DownloadIcon />Download Redacted PDF</>}
+                    </button>
+                    <button 
+                      className="btn btn-ghost btn-sm" 
+                      onClick={() => {
+                        const url = URL.createObjectURL(lastFile)
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = `original_${lastFile.name}`
+                        a.click()
+                        URL.revokeObjectURL(url)
+                      }}
+                    >
+                      <DownloadIcon />Download Original PDF
+                    </button>
+                  </>
+                )}
                 {mode === 'pseudonymise' && (
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    Token map stored — reversal available on request
+                    Token map stored securely. Admins can reverse tokens to re-identify.
                   </span>
                 )}
               </div>

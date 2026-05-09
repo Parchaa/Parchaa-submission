@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { assessCompleteness, compareDocuments, uploadFile } from '../lib/api'
+import HistoryPanel from '../components/HistoryPanel'
 import {
   CheckIcon, CheckCircleIcon, XCircleIcon, AlertCircleIcon, MinusIcon,
   ZapIcon, AlertIcon, ListIcon, LightbulbIcon, GitIcon, DiffIcon, CodeIcon,
-  DocAIcon, DocBIcon, CopyIcon, DownloadIcon,
+  DocAIcon, DocBIcon, CopyIcon, DownloadIcon, InfoIcon
 } from '../components/Icons'
 
 const CHECKLIST_TYPES = [
@@ -38,10 +39,11 @@ function ScoreBar({ pct }) {
 }
 
 // Custom hook — wraps useDropzone with upload-on-drop behaviour
-function useUploadDropzone(setter, setError) {
+function useUploadDropzone(setter, setFile, setError) {
   return useDropzone({
     onDrop: async (files) => {
       if (!files[0]) return
+      if (setFile) setFile(files[0])
       try {
         const { text } = await uploadFile(files[0])
         setter(text)
@@ -105,19 +107,76 @@ function formatResult(result) {
   return lines.join('\n')
 }
 
+function highlightText(text, query) {
+  if (!query) return text;
+  const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escapeRegExp(query)})`, 'gi'));
+  return parts.map((part, i) => 
+    part.toLowerCase() === query.toLowerCase() 
+      ? <mark key={i} style={{ background: 'var(--warning)', color: '#000', padding: '2px 4px', borderRadius: 3, fontWeight: 600 }}>{part}</mark> 
+      : part
+  );
+}
+
+
+const DB_NAME = 'cdsco_completeness_db'
+const STORE_NAME = 'files'
+
+function initDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1)
+    request.onupgradeneeded = (e) => {
+      const db = e.target.result
+      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME)
+    }
+    request.onsuccess = (e) => resolve(e.target.result)
+    request.onerror = (e) => reject(e.target.error)
+  })
+}
+
+async function saveFileToDB(file, key) {
+  if (!file) return
+  const db = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite')
+    const store = transaction.objectStore(STORE_NAME)
+    store.put(file, key)
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+  })
+}
+
+async function getFileFromDB(key) {
+  const db = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readonly')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.get(key)
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
 export default function CompletenessPage() {
   const [activeTab, setActiveTab] = useState('completeness')
   const [text, setText] = useState('')
   const [checklistType, setChecklistType] = useState('Clinical Trial Application')
   const [doc1, setDoc1] = useState('')
   const [doc2, setDoc2] = useState('')
+  const [file1, setFile1] = useState(null)
+  const [file2, setFile2] = useState(null)
+  const [file1Url, setFile1Url] = useState('')
+  const [file2Url, setFile2Url] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const [showFlowOverlay, setShowFlowOverlay] = useState(false)
+  const [selectedChangeForDiff, setSelectedChangeForDiff] = useState(null)
+  const [viewMode, setViewMode] = useState('pdf') // 'pdf' or 'text'
 
-  const dzText = useUploadDropzone(setText, setError)
-  const dz1    = useUploadDropzone(setDoc1, setError)
-  const dz2    = useUploadDropzone(setDoc2, setError)
+  const dzText = useUploadDropzone(setText, null, setError)
+  const dz1    = useUploadDropzone(setDoc1, (f) => { setFile1(f); saveFileToDB(f, 'file1') }, setError)
+  const dz2    = useUploadDropzone(setDoc2, (f) => { setFile2(f); saveFileToDB(f, 'file2') }, setError)
 
   const copyResult = () => {
     if (!result) return
@@ -142,7 +201,7 @@ export default function CompletenessPage() {
     setResult(null)
     try {
       if (activeTab === 'completeness') {
-        const r = await assessCompleteness(text, checklistType)
+        const r = await assessCompleteness(text, checklistType, '')
         setResult({ type: 'completeness', data: r })
       } else {
         const r = await compareDocuments(doc1, doc2)
@@ -154,6 +213,88 @@ export default function CompletenessPage() {
       setLoading(false)
     }
   }
+
+  // 1. Initial mount: restore last active tab and IndexedDB
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const savedTab = localStorage.getItem('cdsco_completeness_activeTab')
+        if (savedTab) setActiveTab(savedTab)
+
+        const f1 = await getFileFromDB('file1')
+        const f2 = await getFileFromDB('file2')
+        if (f1) setFile1(f1)
+        if (f2) setFile2(f2)
+      } catch {}
+    }
+    init()
+  }, [])
+
+  // 2. Load tab state when activeTab changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('cdsco_completeness_activeTab', activeTab)
+      const saved = localStorage.getItem(`cdsco_completeness_data_${activeTab}`)
+      if (saved) {
+        const data = JSON.parse(saved)
+        if (data.result) setResult(data.result)
+        else setResult(null)
+        if (data.text) setText(data.text)
+        if (data.checklistType) setChecklistType(data.checklistType)
+        if (data.doc1) setDoc1(data.doc1)
+        if (data.doc2) setDoc2(data.doc2)
+      } else {
+        setResult(null)
+      }
+    } catch {
+      setResult(null)
+    }
+  }, [activeTab])
+
+  // 3. Save state when result changes
+  useEffect(() => {
+    if (result) {
+      try {
+        const dataToSave = activeTab === 'completeness' 
+          ? { result, text, checklistType }
+          : { result, doc1, doc2 }
+        localStorage.setItem(`cdsco_completeness_data_${activeTab}`, JSON.stringify(dataToSave))
+      } catch {}
+    }
+  }, [result, activeTab, text, checklistType, doc1, doc2])
+
+  useEffect(() => {
+    console.log('CompletenessPage: File1 changed:', file1 ? `${file1.name} (${file1.type})` : 'null')
+    if (file1) {
+      const url = URL.createObjectURL(file1)
+      setFile1Url(url)
+      return () => {
+        console.log('CompletenessPage: Revoking URL1')
+        URL.revokeObjectURL(url)
+      }
+    } else {
+      setFile1Url('')
+    }
+  }, [file1])
+
+  useEffect(() => {
+    console.log('CompletenessPage: File2 changed:', file2 ? `${file2.name} (${file2.type})` : 'null')
+    if (file2) {
+      const url = URL.createObjectURL(file2)
+      setFile2Url(url)
+      return () => {
+        console.log('CompletenessPage: Revoking URL2')
+        URL.revokeObjectURL(url)
+      }
+    } else {
+      setFile2Url('')
+    }
+  }, [file2])
+
+  const isPdf1 = !!(file1 && (file1.type === 'application/pdf' || file1.name?.toLowerCase().endsWith('.pdf')))
+  const isPdf2 = !!(file2 && (file2.type === 'application/pdf' || file2.name?.toLowerCase().endsWith('.pdf')))
+
+  console.log('CompletenessPage State:', { isPdf1, isPdf2, hasUrl1: !!file1Url, hasUrl2: !!file2Url, viewMode })
 
   const canRun = activeTab === 'completeness'
     ? !!text.trim()
@@ -169,19 +310,110 @@ export default function CompletenessPage() {
       </div>
 
       <div className="tabs">
-        <button className={`tab-btn${activeTab === 'completeness' ? ' active' : ''}`} onClick={() => { setActiveTab('completeness'); setResult(null) }}>
+        <button className={`tab-btn${activeTab === 'completeness' ? ' active' : ''}`} onClick={() => setActiveTab('completeness')}>
           Completeness Check
         </button>
-        <button className={`tab-btn${activeTab === 'compare' ? ' active' : ''}`} onClick={() => { setActiveTab('compare'); setResult(null) }}>
+        <button className={`tab-btn${activeTab === 'compare' ? ' active' : ''}`} onClick={() => setActiveTab('compare')}>
           Document Comparison
         </button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {activeTab === 'completeness' && (
+          <HistoryPanel
+            module="completeness"
+            onLoad={(data) => {
+              setResult({ type: 'completeness', data: data.result })
+              setChecklistType(data.doc_type || 'Clinical Trial Application')
+              setError('')
+            }}
+          />
+        )}
+
         {/* ── Input section ── */}
         {activeTab === 'completeness' ? (
           <div className="card">
-            <div className="card-title"><CheckIcon />Completeness Check</div>
+            <div className="card-title" style={{ justifyContent: 'space-between' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <CheckIcon />Completeness Check
+              </span>
+              <button 
+                className="btn btn-secondary" 
+                style={{ padding: '4px 10px', fontSize: '11px' }}
+                onClick={() => setShowFlowOverlay(true)}
+              >
+                <InfoIcon size={12} /> How is this scored?
+              </button>
+            </div>
+
+            {showFlowOverlay && (
+              <div style={{
+                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                background: 'rgba(0,0,0,0.6)', zIndex: 9999,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                padding: '20px'
+              }} onClick={() => setShowFlowOverlay(false)}>
+                <div style={{
+                  background: 'var(--bg-card)', padding: '28px', borderRadius: '16px',
+                  width: '100%', maxWidth: '650px', boxShadow: 'var(--shadow)',
+                  position: 'relative', border: '1px solid var(--border)'
+                }} onClick={e => e.stopPropagation()}>
+                  <button 
+                    onClick={() => setShowFlowOverlay(false)} 
+                    style={{ position: 'absolute', top: 16, right: 16, background: 'var(--bg-hover)', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >✕</button>
+                  
+                  <h3 style={{ marginTop: 0, color: 'var(--text-heading)', fontSize: '18px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <InfoIcon /> Completeness Scoring Methodology
+                  </h3>
+                  <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '24px', lineHeight: 1.6 }}>
+                    We do <strong>not</strong> simply ask the LLM for a random score. Instead, we use a deterministic mathematical formula based on the LLM's classification of specific mandatory parameters.
+                  </p>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px' }}>
+                      <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-heading)', marginBottom: 8 }}>1. Parameter Extraction</div>
+                      <div style={{ fontSize: '13px', color: 'var(--text)', marginBottom: 8 }}>
+                        The AI is prompted to explicitly search the document for CDSCO mandatory checklist items (e.g., <em>Form CT-04, Clinical Protocol, ICFs, Investigator's Brochure, EC Approval</em>).
+                      </div>
+                    </div>
+
+                    <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px' }}>
+                      <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-heading)', marginBottom: 8 }}>2. Item Classification</div>
+                      <div style={{ fontSize: '13px', color: 'var(--text)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', gap: 8 }}><span className="badge badge-green" style={{width: 60, justifyContent: 'center'}}>Present</span><span>(1.0 weight) The item is clearly and adequately addressed.</span></div>
+                        <div style={{ display: 'flex', gap: 8 }}><span className="badge badge-yellow" style={{width: 60, justifyContent: 'center'}}>Partial</span><span>(0.5 weight) The item is mentioned but lacks required detail or format.</span></div>
+                        <div style={{ display: 'flex', gap: 8 }}><span className="badge badge-red" style={{width: 60, justifyContent: 'center'}}>Missing</span><span>(0.0 weight) The item is entirely absent from the document.</span></div>
+                        <div style={{ display: 'flex', gap: 8 }}><span className="badge badge-purple" style={{width: 60, justifyContent: 'center'}}>N/A</span><span>Excluded from calculation. Genuinely does not apply.</span></div>
+                      </div>
+                    </div>
+
+                    <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: '12px' }}>
+                      <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-heading)', marginBottom: 8 }}>3. Mathematical Calculation</div>
+                      <div style={{ fontSize: '13px', color: 'var(--text)', marginBottom: 8 }}>
+                        <code style={{ background: 'var(--bg-card)', padding: '4px 8px', borderRadius: 4, color: 'var(--accent)' }}>
+                          Score % = (Sum of weights) / (Count of applicable items) * 100
+                        </code>
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        <strong>Status Thresholds:</strong><br/>
+                        • <span style={{color: 'var(--success)'}}>Complete</span>: ≥ 90%<br/>
+                        • <span style={{color: 'var(--accent)'}}>Mostly Complete</span>: 70–89%<br/>
+                        • <span style={{color: 'var(--warning)'}}>Incomplete</span>: 50–69%<br/>
+                        • <span style={{color: 'var(--danger)'}}>Critical Gaps</span>: &lt; 50% (or any critical item Missing)
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+                        <strong>Action Logic:</strong><br/>
+                        • <span style={{color: 'var(--success)'}}>Approve for Review</span>: ≥ 90%<br/>
+                        • <span style={{color: 'var(--warning)'}}>Issue Deficiency Letter</span>: 70–89%<br/>
+                        • <span style={{color: 'var(--danger)'}}>Return Application</span>: &lt; 70%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="form-group" style={{ marginBottom: 12 }}>
               <label className="form-label">Checklist Type</label>
               <select className="form-select" value={checklistType} onChange={e => setChecklistType(e.target.value)}>
@@ -269,7 +501,18 @@ export default function CompletenessPage() {
             return (
               <>
                 <div className="card">
-                  <div className="card-title"><CheckIcon />Completeness Score — {checklistType}</div>
+                  <div className="card-title" style={{ justifyContent: 'space-between' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <CheckIcon />Completeness Score — {checklistType}
+                    </span>
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ padding: '3px 10px', fontSize: 10 }}
+                      onClick={() => setShowFlowOverlay(true)}
+                    >
+                      <InfoIcon size={11} style={{ marginRight: 4 }} /> Score Reference
+                    </button>
+                  </div>
                   <ScoreBar pct={pct} />
                   {d.status && <div style={{ marginTop: 10, fontSize: 13, color: 'var(--text-muted)' }}>Status: <strong style={{ color: 'var(--text-heading)' }}>{d.status}</strong></div>}
                   {d.reviewer_action && <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--accent-bg)', borderRadius: 6, fontSize: 12, color: 'var(--accent)', borderLeft: '3px solid var(--accent)' }}>{d.reviewer_action}</div>}
@@ -324,6 +567,19 @@ export default function CompletenessPage() {
                     </div>
                   </div>
                 )}
+
+                <div className="card" style={{ background: 'var(--bg-input)', border: '1px solid var(--border)' }}>
+                  <div className="card-title" style={{ fontSize: 13, color: 'var(--text-heading)', marginBottom: 8 }}><CheckCircleIcon /> Human-in-the-Loop Override</div>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Review the AI assessment above and make a final manual determination:</p>
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                    <button className="btn btn-primary btn-sm" style={{ flex: 1, background: 'var(--success)', color: '#fff', border: 'none' }} onClick={() => alert('Application marked as Complete & Sent for Review.')}>
+                      <CheckIcon size={14} /> Mark Complete & Send for Review
+                    </button>
+                    <button className="btn btn-primary btn-sm" style={{ flex: 1, background: 'var(--danger)', color: '#fff', border: 'none' }} onClick={() => alert('Application returned to sponsor.')}>
+                      <XCircleIcon size={14} /> Return Application
+                    </button>
+                  </div>
+                </div>
               </>
             )
           })()}
@@ -352,10 +608,15 @@ export default function CompletenessPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {d.significant_changes.map((c, i) => (
                         <div key={i} style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
-                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>{c.section}</span>
-                            <span className={`badge ${c.impact === 'High' ? 'badge-red' : c.impact === 'Medium' ? 'badge-yellow' : 'badge-green'}`}>{c.type}</span>
-                            <span className={`badge ${c.impact === 'High' ? 'badge-red' : c.impact === 'Medium' ? 'badge-yellow' : 'badge-blue'}`}>{c.impact} Impact</span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>{c.section}</span>
+                              <span className={`badge ${c.impact === 'High' ? 'badge-red' : c.impact === 'Medium' ? 'badge-yellow' : 'badge-green'}`}>{c.type}</span>
+                              <span className={`badge ${c.impact === 'High' ? 'badge-red' : c.impact === 'Medium' ? 'badge-yellow' : 'badge-blue'}`}>{c.impact} Impact</span>
+                            </div>
+                            <button className="btn btn-secondary btn-sm" style={{ padding: '2px 8px', fontSize: 10 }} onClick={() => setSelectedChangeForDiff(c)}>
+                              <DiffIcon size={12} /> Show Doc Change
+                            </button>
                           </div>
                           <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>{c.description}</p>
                           {c.regulatory_significance && (
@@ -413,6 +674,89 @@ export default function CompletenessPage() {
           )}
         </div>
       </div>
+
+      {/* Side-by-side Document Change Diff Overlay */}
+      {selectedChangeForDiff && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)', zIndex: 99999,
+          display: 'flex', flexDirection: 'column',
+          padding: '30px'
+        }} onClick={() => setSelectedChangeForDiff(null)}>
+          <div style={{
+            background: 'var(--bg-app)', borderRadius: '12px', flex: 1,
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: '12px 24px', background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                  <h3 style={{ margin: 0, fontSize: 16, color: 'var(--text-heading)' }}>Change: {selectedChangeForDiff.section}</h3>
+                  <span className={`badge ${selectedChangeForDiff.impact === 'High' ? 'badge-red' : selectedChangeForDiff.impact === 'Medium' ? 'badge-yellow' : 'badge-blue'}`}>{selectedChangeForDiff.type}</span>
+                </div>
+                <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)' }}>{selectedChangeForDiff.description}</p>
+                {(selectedChangeForDiff.text_before || selectedChangeForDiff.text_after) && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: 'var(--warning)', fontWeight: 600, display: 'flex', gap: 16 }}>
+                    {selectedChangeForDiff.text_before && <span>Original: "{selectedChangeForDiff.text_before}"</span>}
+                    {selectedChangeForDiff.text_after && <span>Revised: "{selectedChangeForDiff.text_after}"</span>}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <div className="tabs" style={{ marginBottom: 0, padding: 2, background: 'var(--bg-input)', borderRadius: 8 }}>
+                  <button className={`tab-btn btn-sm ${viewMode === 'pdf' ? 'active' : ''}`} style={{ padding: '4px 12px', fontSize: 11 }} onClick={() => setViewMode('pdf')}>PDF View</button>
+                  <button className={`tab-btn btn-sm ${viewMode === 'text' ? 'active' : ''}`} style={{ padding: '4px 12px', fontSize: 11 }} onClick={() => setViewMode('text')}>Text View</button>
+                </div>
+                <button className="btn btn-secondary" onClick={() => setSelectedChangeForDiff(null)}><XCircleIcon /> Close</button>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+              {/* Version 1 */}
+              <div style={{ flex: 1, padding: '24px', overflowY: 'auto', borderRight: '1px solid var(--border)', background: 'var(--bg-input)', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ position: 'sticky', top: 0, background: 'var(--bg-input)', paddingBottom: 12, marginBottom: 12, borderBottom: '1px dashed var(--border)', zIndex: 10 }}>
+                  <h4 style={{ margin: 0, color: 'var(--text-heading)', display: 'flex', alignItems: 'center', gap: 8 }}><DocAIcon /> Version 1 (Original)</h4>
+                </div>
+                {viewMode === 'pdf' && isPdf1 && file1Url ? (
+                  <div style={{ flex: 1, position: 'relative', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                    <iframe 
+                      key={file1Url + selectedChangeForDiff.text_before}
+                      src={`${file1Url}#search=${encodeURIComponent(selectedChangeForDiff.text_before || selectedChangeForDiff.section)}`} 
+                      style={{ width: '100%', height: '100%', border: 'none', position: 'absolute', top: 0, left: 0 }} 
+                      title="PDF 1"
+                    />
+                  </div>
+                ) : (
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, color: 'var(--text)', fontFamily: 'monospace', lineHeight: 1.6, background: 'var(--bg-card)', padding: 16, borderRadius: 8, border: '1px solid var(--border)' }}>
+                    {highlightText(doc1, selectedChangeForDiff.text_before || selectedChangeForDiff.section)}
+                  </div>
+                )}
+              </div>
+              
+              {/* Version 2 */}
+              <div style={{ flex: 1, padding: '24px', overflowY: 'auto', background: 'var(--bg-input)', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ position: 'sticky', top: 0, background: 'var(--bg-input)', paddingBottom: 12, marginBottom: 12, borderBottom: '1px dashed var(--border)', zIndex: 10 }}>
+                  <h4 style={{ margin: 0, color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 8 }}><DocBIcon /> Version 2 (Revised)</h4>
+                </div>
+                {viewMode === 'pdf' && isPdf2 && file2Url ? (
+                  <div style={{ flex: 1, position: 'relative', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                    <iframe 
+                      key={file2Url + selectedChangeForDiff.text_after}
+                      src={`${file2Url}#search=${encodeURIComponent(selectedChangeForDiff.text_after || selectedChangeForDiff.section)}`} 
+                      style={{ width: '100%', height: '100%', border: 'none', position: 'absolute', top: 0, left: 0 }} 
+                      title="PDF 2"
+                    />
+                  </div>
+                ) : (
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, color: 'var(--text)', fontFamily: 'monospace', lineHeight: 1.6, background: 'var(--bg-card)', padding: 16, borderRadius: 8, border: '1px solid var(--border)' }}>
+                    {highlightText(doc2, selectedChangeForDiff.text_after || selectedChangeForDiff.section)}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

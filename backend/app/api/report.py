@@ -1,9 +1,9 @@
 import time
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, field_validator
 from app.deps import get_ai
-from modules.inspection_report import generate_inspection_report, format_report_as_text
+from modules.inspection_report import generate_inspection_report, format_report_as_text, format_report_as_xlsx
 from utils.file_handler import truncate
 
 router = APIRouter()
@@ -18,6 +18,7 @@ _VALID_REPORT_TYPES = frozenset([
 class ReportRequest(BaseModel):
     text: str
     report_type: str = "GMP Inspection"
+    filename: str = ""
 
     @field_validator("text")
     @classmethod
@@ -42,10 +43,9 @@ def report(req: ReportRequest):
     try:
         from database import log_job, save_result
         job_id = log_job(module="inspection_report", doc_type=req.report_type,
+                         filename=req.filename,
                          duration_ms=int((time.time() - t0) * 1000))
-        save_result(job_id, "inspection_report", {
-            k: v for k, v in result.items() if k != "findings"
-        })
+        save_result(job_id, "inspection_report", result)
     except Exception:
         pass
     return result
@@ -56,3 +56,17 @@ def report_text(req: ReportRequest):
     client, model = get_ai()
     result = generate_inspection_report(truncate(req.text), req.report_type, client, model)
     return format_report_as_text(result)
+
+
+@router.post("/report/xlsx")
+def report_xlsx(req: ReportRequest):
+    client, model = get_ai()
+    result = generate_inspection_report(truncate(req.text), req.report_type, client, model)
+    xlsx_bytes = format_report_as_xlsx(result)
+    
+    filename = f"Inspection_Report_{int(time.time())}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )

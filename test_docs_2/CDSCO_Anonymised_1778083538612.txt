@@ -1,0 +1,153 @@
+============================================================
+CDSCO RegAI — PII/PHI Anonymisation Output
+Mode: Pseudonymisation (reversible tokens)
+============================================================
+
+ANONYMISED TEXT
+----------------------------------------
+------------------------------------------------------------------------------- 
+[[PERSON_041]] ([INSTITUTIONAL_ID]), [MEDICAL_RECORD_006] 
+[WARD_OR_DEPARTMENT] 
+------------------------------------------------------------------------------- 
+CASE SUMMARY: ADMISSION & [MEDICAL_RECORD_005] PROGRESS NOTES 
+REPORT ID: [INSTITUTIONAL_ID]-[INCIDENT_REPORT_001] 
+DATE: [DATE_TIME_013] 
+ 
+[MEDICAL_RECORD_004]: 
+Patient Name: [PERSON_040]/Sex: [DATE_TIME_012] / Male 
+Aadhaar No: [AADHAAR_NUMBER_001] 
+MRN (Hospital ID): [INSTITUTIONAL_ID]-2019-7721 
+Father's Name: [PERSON_039]Mother's Name: [PERSON_038]: [PERSON_037] [PHONE_NUMBER_001]) 
+Address: House No. 224, Sector 15-C, [LOCATION_002]ECORD_003] - [PINCODE_001] 
+ 
+ADMISSION NOTE ([DATE_TIME_011]): 
+[PERSON_036] presented with persistent low-grade fever and bone pain for [DATE_TIME_010]. Aryan 
+[PERSON_035] was previously seen at a local clinic where he was [PHI_DIAGNOSIS_002]. [PERSON_034] (father) reports that [PERSON_033] has been unusually lethargic. Upon 
+examination, [PERSON_032] showed signs of pallor and mild hepatosplenomegaly. 
+ 
+[PERSON_031] mentions that there is no family [PHI_DIAGNOSIS_001]. [PERSON_030] 
+(mother) was also interviewed; she noted that [PERSON_029] had a normal birth history. 
+[PERSON_028] blood work showed a high WBC count ([DATE_TIME_009]) and [LAB_VALUE], 
+suggestive of Acute Lymphoblastic Leukemia (ALL). 
+ 
+PROCEDURE NOTE ([DATE_TIME_008]): 
+Bone marrow aspiration and biopsy performed on [PERSON_027] under conscious sedation. 
+Procedure was explained to [PERSON_026], and written informed consent was obtained 
+from [PERSON_025] in the presence of a witness. [PERSON_024] tolerated the procedure 
+well. [PERSON_023] remained by [PERSON_022] side during the recovery phase. 
+ 
+[MEDICAL_RECORD_002] LOG - PHASE I (INDUCTION): 
+[DATE_TIME_007]: [DRUG_DOSE] administered to [PERSON_021]. [PERSON_020] 
+showed no immediate hypersensitivity. [PERSON_019] was instructed on monitoring [NRP_001] 
+Sharma for peripheral neuropathy symptoms. 
+[DATE_TIME_006]: [DRUG_DOSE] given [LOCATION_001] to [PERSON_018]. Nursing notes 
+indicate [PERSON_017] was cooperative. [PERSON_016] reported that [PERSON_015] had 
+one episode of vomiting post-infusion. 
+ 
+NURSING HANDOVER: 
+[PERSON_014] is currently stable in [BED_NUMBER]. [PERSON_013] vitals are being monitored every 
+[DATE_TIME_005]. [PERSON_012] is the designated bedside attendant. [PERSON_011] has been 
+provided with the pharmacy list for [PERSON_010] medications. [PERSON_009] will relieve 
+
+[PERSON_008] at [DATE_TIME_004] [DATE_TIME_003]. Please ensure [PERSON_007] MRN 
+([INSTITUTIONAL_ID]-2019-7721) is [MEDICAL_RECORD_001] before any medication delivery. 
+ 
+DISCHARGE PLAN (PROVISIONAL): 
+Once [PERSON_006] completes the induction phase, [PERSON_005] will be monitored as an 
+outpatient. [PERSON_004] has been given a [DATE_TIME_002] helpline number. [PERSON_003] must 
+return for follow-up on [DATE_TIME_001]. Dr. [PERSON_002], Senior Consultant, has reviewed 
+[PERSON_001] progress.
+
+Total entities redacted: 79
+
+LAYER 1 — REGEX RULES
+----------------------------------------
+  Incident Report          PED-ONC-2024-0892                → [INCIDENT_REPORT_001]
+  Aadhaar Number           4521 9902 3145                   → [AADHAAR_NUMBER_001]
+  Pincode                  160015                           → [PINCODE_001]
+
+LAYER 2 — PRESIDIO / NER
+----------------------------------------
+  FACILITY                 GOVERNMENT MEDICAL COLLEGE & HOSPITAL → [FACILITY_NAME_001]
+  PERSON                   Aryan Sharma's                   → [PERSON_001]
+  PERSON                   Sandeep Gupta                    → [PERSON_002]
+  DATE_TIME                28 APRIL 2024                    → [DATE_TIME_001]
+  PERSON                   Aryan Sharma                     → [PERSON_003]
+  DATE_TIME                24-hour                          → [DATE_TIME_002]
+  PERSON                   Vikram Sharma                    → [PERSON_004]
+  PERSON                   Aryan Sharma                     → [PERSON_005]
+  PERSON                   Aryan Sharma                     → [PERSON_006]
+  MEDICAL_RECORD           checked                          → [MEDICAL_RECORD_001]
+  PERSON                   Aryan Sharma's                   → [PERSON_007]
+  DATE_TIME                tonight                          → [DATE_TIME_003]
+  DATE_TIME                8:00 PM                          → [DATE_TIME_004]
+  PERSON                   Vikram Sharma                    → [PERSON_008]
+  PERSON                   Meena Sharma                     → [PERSON_009]
+  PERSON                   Aryan Sharma's                   → [PERSON_010]
+  PERSON                   Vikram Sharma                    → [PERSON_011]
+  PERSON                   Vikram Sharma                    → [PERSON_012]
+  DATE_TIME                4 hours                          → [DATE_TIME_005]
+  PERSON                   Aryan Sharma's                   → [PERSON_013]
+  PERSON                   Aryan Sharma                     → [PERSON_014]
+  PERSON                   Aryan Sharma                     → [PERSON_015]
+  PERSON                   Vikram Sharma                    → [PERSON_016]
+  PERSON                   Aryan Sharma                     → [PERSON_017]
+  PERSON                   Aryan Sharma                     → [PERSON_018]
+  LOCATION                 IM                               → [LOCATION_001]
+  DATE_TIME                13 APRIL 2024                    → [DATE_TIME_006]
+  NRP                      Aryan                            → [NRP_001]
+  PERSON                   Vikram Sharma                    → [PERSON_019]
+  PERSON                   Aryan Sharma                     → [PERSON_020]
+  PERSON                   Aryan Sharma                     → [PERSON_021]
+  DATE_TIME                12 APRIL 2024                    → [DATE_TIME_007]
+  MEDICAL_RECORD           CHEMOTHERAPY                     → [MEDICAL_RECORD_002]
+  PERSON                   Aryan Sharma's                   → [PERSON_022]
+  PERSON                   Vikram Sharma                    → [PERSON_023]
+  PERSON                   Aryan Sharma                     → [PERSON_024]
+  PERSON                   Vikram Sharma                    → [PERSON_025]
+  PERSON                   Vikram Sharma                    → [PERSON_026]
+  PERSON                   Aryan Sharma                     → [PERSON_027]
+  DATE_TIME                11 APRIL 2024                    → [DATE_TIME_008]
+  DATE_TIME                42,000/uL                        → [DATE_TIME_009]
+  PERSON                   Aryan Sharma's                   → [PERSON_028]
+  PERSON                   Aryan Sharma                     → [PERSON_029]
+  PERSON                   Meena Sharma                     → [PERSON_030]
+  PHI_DIAGNOSIS            history of malignancy            → [PHI_DIAGNOSIS_001]
+  PERSON                   Vikram Sharma                    → [PERSON_031]
+  PERSON                   Aryan Sharma                     → [PERSON_032]
+  PERSON                   Aryan Sharma                     → [PERSON_033]
+  PERSON                   Vikram Sharma                    → [PERSON_034]
+  PHI_DIAGNOSIS            treated for viral fever with no 
+relief → [PHI_DIAGNOSIS_002]
+  PERSON                   Sharma                           → [PERSON_035]
+  DATE_TIME                3 weeks                          → [DATE_TIME_010]
+  PERSON                   Aryan Sharma                     → [PERSON_036]
+  DATE_TIME                10 APRIL 2024                    → [DATE_TIME_011]
+  MEDICAL_RECORD           Chandigarh                       → [MEDICAL_RECORD_003]
+  LOCATION                 Chandigarh                       → [LOCATION_002]
+  PHONE_NUMBER             (+91 98150-12345                 → [PHONE_NUMBER_001]
+  PERSON                   Vikram Sharma                    → [PERSON_037]
+  PERSON                   Meena Sharma 
+Primary Contact    → [PERSON_038]
+  PERSON                   Vikram Sharma 
+                  → [PERSON_039]
+  DATE_TIME                8 years                          → [DATE_TIME_012]
+  PERSON                   Aryan Sharma 
+Age                → [PERSON_040]
+  MEDICAL_RECORD           PATIENT IDENTIFICATION           → [MEDICAL_RECORD_004]
+  DATE_TIME                14 APRIL 2024                    → [DATE_TIME_013]
+  MEDICAL_RECORD           CHEMOTHERAPY                     → [MEDICAL_RECORD_005]
+  MEDICAL_RECORD           CHANDIGARH                       → [MEDICAL_RECORD_006]
+  PERSON                   FACILITY_NAME_001                → [PERSON_041]
+
+LAYER 3 — AI MODEL
+----------------------------------------
+  Reference_Number         GMCH                             → [INSTITUTIONAL_ID]
+  Facility_ID              DEPARTMENT OF PEDIATRIC ONCOLOGY - WARD 4B → [WARD_OR_DEPARTMENT]
+  Reference_Number         GMCH                             → [INSTITUTIONAL_ID]
+  Reference_Number         GMCH-2019-7721                   → [INSTITUTIONAL_ID]
+  Lab_Value                65% blasts                       → [LAB_VALUE]
+  Clinical_PHI             Vincristine 1.5mg/m2             → [DRUG_DOSE]
+  Clinical_PHI             L-Asparaginase 6000 IU/m2        → [DRUG_DOSE]
+  Facility_ID              Bed 12                           → [BED_NUMBER]
+  Reference_Number         GMCH-2019-7721                   → [INSTITUTIONAL_ID]

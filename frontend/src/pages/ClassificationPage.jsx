@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { classify, detectDuplicate, classifyBatch, uploadFile } from '../lib/api'
 import {
   TagIcon, LayersIcon, ZapIcon, CopyIcon, PlusIcon, XSmallIcon,
   AlertIcon, CheckIcon, InfoIcon, DownloadIcon, UploadIcon,
 } from '../components/Icons'
+import HistoryPanel from '../components/HistoryPanel'
 
 const SEV_STYLE = {
   'Death':                           { badge: 'badge-red',    urgent: true },
@@ -37,6 +38,7 @@ function formatSingleResult(d) {
     `Severity Score   : ${d.severity_score ? `${d.severity_score}/10` : '—'}`,
     '',
   ]
+  if (d.case_summary) { lines.push('CASE SUMMARY', sub, d.case_summary, '') }
   if (d.seriousness_criteria?.length) { lines.push('SERIOUSNESS CRITERIA (ICH E2A)', sub); d.seriousness_criteria.forEach(c => lines.push(`  · ${c}`)); lines.push('') }
   if (d.flags?.length) { lines.push('SPECIAL FLAGS', sub); d.flags.forEach(f => lines.push(`  · ${f}`)); lines.push('') }
   if (d.reviewer_priority_notes) { lines.push('REVIEWER NOTES', sub, d.reviewer_priority_notes, '') }
@@ -65,6 +67,32 @@ function formatBatchResult(rows) {
   return lines.join('\n')
 }
 
+const ICH_CATEGORIES = [
+  { name: 'Death',                           color: 'badge-red',    def: 'Patient died as a direct result of the adverse event.' },
+  { name: 'Life-Threatening',                color: 'badge-red',    def: 'Patient was at immediate risk of death at the time of the event.' },
+  { name: 'Hospitalisation Required',        color: 'badge-yellow', def: 'Inpatient hospitalisation or prolongation of existing hospitalisation.' },
+  { name: 'Persistent Disability/Incapacity',color: 'badge-yellow', def: 'Substantial disruption of ability to conduct normal life functions.' },
+  { name: 'Congenital Anomaly/Birth Defect', color: 'badge-purple', def: 'Adverse effect in offspring of a patient who received the drug.' },
+  { name: 'Medically Important Event',       color: 'badge-blue',   def: 'Event that may jeopardise the patient or require intervention to prevent the above.' },
+  { name: 'Other Non-Serious',               color: 'badge-green',  def: 'Does not meet any of the six seriousness criteria above.' },
+]
+
+const RESPONSE_FIELDS = [
+  { field: 'severity_class',        label: 'Severity Class',      desc: 'One of the 7 ICH E2A categories above.' },
+  { field: 'priority',              label: 'Priority',             desc: 'URGENT / HIGH / MEDIUM / LOW — derived from severity × causality.' },
+  { field: 'causality_assessment',  label: 'Causality',           desc: 'WHO-UMC scale: Certain / Probable / Possible / Unlikely / Conditional / Unassessable.' },
+  { field: 'severity_score',        label: 'Severity Score',      desc: 'Numeric 1–10 scale, 10 = most severe.' },
+  { field: 'case_id',               label: 'Case ID',             desc: 'Extracted from the report text.' },
+  { field: 'outcome',               label: 'Outcome',             desc: 'Patient outcome: Recovered, Recovering, Not Recovered, Fatal, Unknown.' },
+  { field: 'drug_suspect',          label: 'Suspect Drug',        desc: 'The drug suspected of causing the adverse event.' },
+  { field: 'event_pt',              label: 'MedDRA Preferred Term',desc: 'Standardised MedDRA term for the adverse event.' },
+  { field: 'seriousness_criteria',  label: 'Seriousness Criteria',desc: 'List of ICH E2A criteria that apply.' },
+  { field: 'case_summary',          label: 'Case Summary',        desc: 'Concise 2-3 sentence clinical summary of the adverse event.' },
+  { field: 'flags',                 label: 'Special Flags',       desc: 'e.g. unexpected reaction, significant drug interaction, expedited reporting needed.' },
+  { field: 'reviewer_priority_notes',label: 'Reviewer Notes',     desc: 'Written justification for the assigned classification.' },
+  { field: 'duplicate_risk',        label: 'Duplicate Risk',      desc: 'HIGH / MEDIUM / LOW — based on duplicate_indicators found in the report.' },
+]
+
 export default function ClassificationPage() {
   const [activeTab, setActiveTab] = useState('single')
   const [text, setText] = useState('')
@@ -73,9 +101,15 @@ export default function ClassificationPage() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const [filename, setFilename] = useState('')
+  const [showFieldsInfo, setShowFieldsInfo] = useState(false)
+  const [showLogicInfo, setShowLogicInfo] = useState(false)
+  const [dupThreshold, setDupThreshold] = useState(60)
+  const [manualDupDecision, setManualDupDecision] = useState(null) // 'duplicate' | 'not_duplicate' | null
 
   const onDropSingle = useCallback(async (files) => {
     if (!files[0]) return
+    setFilename(files[0].name)
     try { const { text: t } = await uploadFile(files[0]); setText(t) }
     catch { setError('Upload failed') }
   }, [])
@@ -136,7 +170,7 @@ export default function ClassificationPage() {
     setResult(null)
     try {
       if (activeTab === 'single') {
-        const r = await classify(text)
+        const r = await classify(text, filename)
         setResult({ type: 'single', data: r })
       } else if (activeTab === 'duplicate') {
         const r = await detectDuplicate(text, text2)
@@ -152,6 +186,38 @@ export default function ClassificationPage() {
       setLoading(false)
     }
   }
+
+  // 1. Initial mount: restore last active tab
+  useEffect(() => {
+    try {
+      const savedTab = localStorage.getItem('cdsco_classification_activeTab')
+      if (savedTab) {
+        setActiveTab(savedTab)
+      }
+    } catch {}
+  }, [])
+
+  // 2. Load result whenever activeTab changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('cdsco_classification_activeTab', activeTab)
+      const saved = localStorage.getItem(`cdsco_classification_result_${activeTab}`)
+      if (saved) {
+        setResult(JSON.parse(saved))
+      } else {
+        setResult(null)
+      }
+    } catch {
+      setResult(null)
+    }
+  }, [activeTab])
+
+  // 3. Save result whenever it changes (if it is truthy)
+  useEffect(() => {
+    if (result) {
+      try { localStorage.setItem(`cdsco_classification_result_${activeTab}`, JSON.stringify(result)) } catch {}
+    }
+  }, [result, activeTab])
 
   const canRun = activeTab === 'single'
     ? !!text.trim()
@@ -177,7 +243,7 @@ export default function ClassificationPage() {
           <button
             key={id}
             className={`tab-btn${activeTab === id ? ' active' : ''}`}
-            onClick={() => { setActiveTab(id); setResult(null) }}
+            onClick={() => setActiveTab(id)}
           >
             {label}
           </button>
@@ -185,6 +251,16 @@ export default function ClassificationPage() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {activeTab === 'single' && (
+          <HistoryPanel
+            module="classification"
+            onLoad={(data) => {
+              setResult({ type: 'single', data: data.result })
+              setError('')
+            }}
+          />
+        )}
+
         {/* ── Input section ── */}
         {activeTab === 'single' && (
           <div className="card">
@@ -238,10 +314,6 @@ export default function ClassificationPage() {
                   <AlertIcon />Report B exceeds 50,000 characters — will be truncated.
                 </div>
               )}
-            </div>
-            <div className="alert alert-info">
-              <InfoIcon />
-              TF-IDF cosine pre-filter (fast): if score &lt;0.2 the reports are distinct without calling AI. Otherwise blended score = 0.4×cosine + 0.6×AI; duplicate if ≥0.80.
             </div>
           </>
         )}
@@ -314,12 +386,46 @@ export default function ClassificationPage() {
             const priStyle = PRIORITY_STYLE[d.priority] || PRIORITY_STYLE.MEDIUM
             return (
               <>
+                {showFieldsInfo && (
+                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setShowFieldsInfo(false)}>
+                    <div style={{ background: 'var(--bg-card)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 680, maxHeight: '85vh', overflowY: 'auto', position: 'relative', border: '1px solid var(--border)' }} onClick={e => e.stopPropagation()}>
+                      <button onClick={() => setShowFieldsInfo(false)} style={{ position: 'absolute', top: 16, right: 16, background: 'var(--bg-hover)', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                      <h3 style={{ margin: '0 0 4px', fontSize: 17, color: 'var(--text-heading)' }}>SAE Classification — Field Reference</h3>
+                      <p style={{ margin: '0 0 18px', fontSize: 12, color: 'var(--text-muted)' }}>Every field the AI returns and what each ICH E2A category means.</p>
+
+                      <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-heading)', marginBottom: 8 }}>ICH E2A Severity Categories</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 20 }}>
+                        {ICH_CATEGORIES.map(c => (
+                          <div key={c.name} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', background: 'var(--bg-input)', padding: '8px 12px', borderRadius: 8 }}>
+                            <span className={`badge ${c.color}`} style={{ flexShrink: 0, fontSize: 10, marginTop: 2 }}>{c.name}</span>
+                            <span style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5 }}>{c.def}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-heading)', marginBottom: 8 }}>Response Fields</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        {RESPONSE_FIELDS.map(f => (
+                          <div key={f.field} style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 10, padding: '6px 12px', background: 'var(--bg-input)', borderRadius: 6 }}>
+                            <code style={{ fontSize: 11, color: 'var(--accent)', alignSelf: 'center' }}>{f.field}</code>
+                            <div>
+                              <div style={{ fontSize: 12, color: 'var(--text-heading)', fontWeight: 500 }}>{f.label}</div>
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{f.desc}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="card">
                   <div className="card-title" style={{ justifyContent: 'space-between' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TagIcon />Classification Result</span>
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                       {d.priority && <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 10px', borderRadius: 100, background: priStyle.bg, color: priStyle.color }}>{d.priority}</span>}
                       <span className={`badge ${sevStyle.badge}`}>{d.severity_class}</span>
+                      <button className="btn btn-secondary" style={{ padding: '3px 10px', fontSize: 10 }} onClick={() => setShowFieldsInfo(true)}><InfoIcon size={11} /> Field Reference</button>
                     </div>
                   </div>
 
@@ -338,6 +444,12 @@ export default function ClassificationPage() {
                       </div>
                     ))}
                   </div>
+
+                  {d.case_summary && (
+                    <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 14px', fontSize: 13, lineHeight: 1.6, color: 'var(--text)', borderLeft: '3px solid var(--text-dim)', marginBottom: 8 }}>
+                      {d.case_summary}
+                    </div>
+                  )}
 
                   {d.reviewer_priority_notes && (
                     <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '10px 14px', fontSize: 13, lineHeight: 1.6, color: 'var(--text)', borderLeft: '3px solid var(--accent)' }}>
@@ -383,55 +495,204 @@ export default function ClassificationPage() {
 
           {result?.type === 'duplicate' && !loading && (() => {
             const d = result.data
-            const isDup   = d.is_duplicate
-            const blended = Math.round((d.similarity_score ?? 0) * 100)
-            const cosine  = Math.round((d.cosine_similarity ?? 0) * 100)
+            const blended  = Math.round((d.similarity_score    ?? 0) * 100)
+            const cosine   = Math.round((d.cosine_similarity   ?? 0) * 100)
+            const aiScore  = Math.round((d.ai_similarity       ?? 0) * 100)
+            const aiIsDup  = d.is_duplicate
+            const thresholdDup = blended >= dupThreshold
+            const finalIsDup = manualDupDecision !== null
+              ? manualDupDecision === 'duplicate'
+              : thresholdDup
             return (
-              <div className="card">
-                <div className="card-title" style={{ justifyContent: 'space-between' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><CopyIcon />Duplicate Analysis</span>
-                  <span className={`badge ${isDup ? 'badge-red' : 'badge-green'}`}>
-                    {isDup ? 'Likely Duplicate' : 'Not a Duplicate'}
-                  </span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {showLogicInfo && (
+                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setShowLogicInfo(false)}>
+                    <div style={{ background: 'var(--bg-card)', borderRadius: 20, padding: 32, width: '100%', maxWidth: 600, position: 'relative', border: '1px solid var(--border)', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }} onClick={e => e.stopPropagation()}>
+                      <button onClick={() => setShowLogicInfo(false)} style={{ position: 'absolute', top: 20, right: 20, background: 'var(--bg-hover)', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                      
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+                        <div style={{ background: 'var(--accent-bg)', color: 'var(--accent)', width: 40, height: 40, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <LayersIcon size={24} />
+                        </div>
+                        <div>
+                          <h3 style={{ margin: 0, fontSize: 20, color: 'var(--text-heading)' }}>How is Duplicate Detected?</h3>
+                          <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)' }}>The science behind our blended scoring model.</p>
+                        </div>
+                      </div>
+
+                      <div style={{ background: 'var(--bg-input)', padding: 20, borderRadius: 12, marginBottom: 24, border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', marginBottom: 8 }}>The Formula</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-heading)', fontFamily: 'monospace', textAlign: 'center', margin: '12px 0' }}>
+                          (0.4 × TF-IDF) + (0.6 × AI) = Blended Score
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                          We combine **TF-IDF Cosine Similarity** (which looks at word frequencies and structural overlap) with **AI Semantic Analysis** (which understands clinical intent and context).
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 24 }}>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-heading)', marginBottom: 4 }}>1. Fast Pre-Filter (TF-IDF)</div>
+                          <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>If the TF-IDF score is below 20%, the system instantly marks reports as "Distinct" without calling the AI, saving time and costs.</p>
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-heading)', marginBottom: 4 }}>2. Deep Semantic Check (AI)</div>
+                          <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>The AI compares Patient IDs, Suspect Drugs, Onset Dates, and Event Narratives to see if they describe the same clinical event.</p>
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-heading)', marginBottom: 4 }}>3. Threshold & Control</div>
+                          <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>The <strong>Default Threshold is 60%</strong>. Any blended score above this is flagged as a duplicate. You can use the slider to adjust this — move it right for strict matching, left for more sensitive detection.</p>
+                        </div>
+                      </div>
+
+                      <button className="btn btn-primary btn-full" onClick={() => setShowLogicInfo(false)}>Got it</button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="card">
+                  <div className="card-title" style={{ justifyContent: 'space-between' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <CopyIcon />Duplicate Analysis
+                      <button 
+                        onClick={() => setShowLogicInfo(true)}
+                        style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                      >
+                        <InfoIcon size={14} />
+                      </button>
+                    </span>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      {manualDupDecision && <span className="badge badge-purple" style={{ fontSize: 10 }}>Human Override</span>}
+                      <span className={`badge ${finalIsDup ? 'badge-red' : 'badge-green'}`}>
+                        {finalIsDup ? 'Duplicate' : 'Not a Duplicate'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {d.analysis_summary && (
+                    <p style={{ margin: '0 0 16px', fontSize: 14, color: 'var(--text)', lineHeight: 1.6, background: 'var(--bg-input)', padding: '12px 16px', borderRadius: 8, borderLeft: '3px solid var(--accent)' }}>
+                      {d.analysis_summary}
+                    </p>
+                  )}
+
+                  {/* Score Breakdown */}
+                  <div style={{ background: 'var(--bg-input)', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Score Breakdown</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {[
+                        { label: 'TF-IDF Cosine Similarity', value: cosine, weight: '40%', color: 'var(--accent)', hint: 'Word-frequency based pre-filter.' },
+                        { label: 'AI Semantic Similarity',   value: aiScore, weight: '60%', color: 'var(--purple)', hint: 'Field-by-field contextual comparison.' },
+                      ].map(row => (
+                        <div key={row.label}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                            <span style={{ fontSize: 12, color: 'var(--text)' }}>{row.label} <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>(weight: {row.weight})</span></span>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: row.color }}>{row.value}%</span>
+                          </div>
+                          <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${row.value}%`, background: row.color, borderRadius: 3, transition: 'width 0.5s ease' }} />
+                          </div>
+                        </div>
+                      ))}
+                      <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 8 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-heading)' }}>Blended Score <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)' }}>(0.4 × TF-IDF + 0.6 × AI)</span></span>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: blended >= dupThreshold ? 'var(--danger)' : 'var(--success)' }}>{blended}%</span>
+                        </div>
+                        <div style={{ height: 8, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${blended}%`, background: blended >= dupThreshold ? 'var(--danger)' : 'var(--success)', borderRadius: 4, transition: 'width 0.5s ease' }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Threshold Slider */}
+                  <div style={{ background: 'var(--bg-input)', borderRadius: 10, padding: '14px 16px', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-heading)' }}>Duplicate Threshold</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>{dupThreshold}%</span>
+                    </div>
+                    <input type="range" min="30" max="95" step="5" value={dupThreshold}
+                      onChange={e => { setDupThreshold(Number(e.target.value)); setManualDupDecision(null) }}
+                      style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'pointer' }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                      <span>30% (Sensitive)</span><span>95% (Strict)</span>
+                    </div>
+                  </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
-                  {[
-                    ['Blended Score',   `${blended}%`, blended >= 80 ? 'var(--danger)' : 'var(--text-heading)'],
-                    ['Cosine (TF-IDF)', `${cosine}%`,  'var(--text-heading)'],
-                    ['Matching Fields',  d.matching_elements?.length ?? 0, 'var(--text-heading)'],
-                    ['Differing Fields', d.differing_elements?.length ?? 0, 'var(--text-heading)'],
-                  ].map(([l, v, col]) => (
-                    <div key={l} style={{ background: 'var(--bg-input)', borderRadius: 6, padding: '8px 12px' }}>
-                      <div style={{ fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2 }}>{l}</div>
-                      <div style={{ fontSize: 15, fontWeight: 600, color: col }}>{v}</div>
+                {/* Field Comparison Table */}
+                {d.field_comparison?.length > 0 && (
+                  <div className="card">
+                    <div className="card-title"><LayersIcon />Side-by-Side Field Comparison</div>
+                    <div className="table-wrap">
+                      <table style={{ borderCollapse: 'separate', borderSpacing: '0 4px' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ background: 'transparent', borderBottom: '1px solid var(--border)', fontSize: 11 }}>Field</th>
+                            <th style={{ background: 'transparent', borderBottom: '1px solid var(--border)', fontSize: 11 }}>Version 1</th>
+                            <th style={{ background: 'transparent', borderBottom: '1px solid var(--border)', fontSize: 11 }}>Version 2</th>
+                            <th style={{ background: 'transparent', borderBottom: '1px solid var(--border)', fontSize: 11 }}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {d.field_comparison.map((f, i) => (
+                            <tr key={i} style={{ background: 'var(--bg-input)' }}>
+                              <td style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-heading)', borderTopLeftRadius: 6, borderBottomLeftRadius: 6 }}>{f.field}</td>
+                              <td style={{ fontSize: 12, color: 'var(--text)' }}>{f.v1_value || '—'}</td>
+                              <td style={{ fontSize: 12, color: 'var(--text)' }}>{f.v2_value || '—'}</td>
+                              <td>
+                                <span className={`badge ${
+                                  f.status === 'Match' ? 'badge-green' : 
+                                  f.status === 'Conflict' ? 'badge-red' : 
+                                  f.status === 'Supplementary' ? 'badge-blue' : 'badge-yellow'
+                                }`} style={{ fontSize: 10 }}>{f.status}</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  ))}
+                  </div>
+                )}
+
+                {/* Evidence Snippets */}
+                {d.evidence_snippets && (
+                  <div className="card">
+                    <div className="card-title"><TagIcon />Evidence Highlights</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div style={{ padding: 12, background: 'var(--bg-input)', borderRadius: 8, borderLeft: '3px solid var(--accent)' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-dim)', marginBottom: 6, textTransform: 'uppercase' }}>Version 1 Evidence</div>
+                        <div style={{ fontSize: 12, fontStyle: 'italic', color: 'var(--text)', lineHeight: 1.5 }}>"{d.evidence_snippets.case1}"</div>
+                      </div>
+                      <div style={{ padding: 12, background: 'var(--bg-input)', borderRadius: 8, borderLeft: '3px solid var(--success)' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-dim)', marginBottom: 6, textTransform: 'uppercase' }}>Version 2 Evidence</div>
+                        <div style={{ fontSize: 12, fontStyle: 'italic', color: 'var(--text)', lineHeight: 1.5 }}>"{d.evidence_snippets.case2}"</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="card">
+                  {d.reasoning && (
+                    <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: 12, fontSize: 13, lineHeight: 1.6, marginBottom: 12, borderLeft: '3px solid var(--accent)' }}>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>AI Reasoning</div>
+                      {d.reasoning}
+                    </div>
+                  )}
+
+                  {/* Human override — just buttons */}
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: `1px solid var(--danger)`, background: manualDupDecision === 'duplicate' ? 'var(--danger)' : 'transparent', color: manualDupDecision === 'duplicate' ? '#fff' : 'var(--danger)', cursor: 'pointer', fontSize: 13, fontWeight: 600, transition: 'all 0.2s' }}
+                      onClick={() => setManualDupDecision(manualDupDecision === 'duplicate' ? null : 'duplicate')}>
+                      Mark as Duplicate
+                    </button>
+                    <button style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: `1px solid var(--success)`, background: manualDupDecision === 'not_duplicate' ? 'var(--success)' : 'transparent', color: manualDupDecision === 'not_duplicate' ? '#fff' : 'var(--success)', cursor: 'pointer', fontSize: 13, fontWeight: 600, transition: 'all 0.2s' }}
+                      onClick={() => setManualDupDecision(manualDupDecision === 'not_duplicate' ? null : 'not_duplicate')}>
+                      Mark as Not Duplicate
+                    </button>
+                  </div>
                 </div>
-
-                {d.matching_elements?.length > 0 && (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 11, color: 'var(--success)', fontWeight: 600, marginBottom: 5 }}>MATCHING ELEMENTS</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                      {d.matching_elements.map((m, i) => <span key={i} className="badge badge-green">{m}</span>)}
-                    </div>
-                  </div>
-                )}
-
-                {d.differing_elements?.length > 0 && (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 11, color: 'var(--danger)', fontWeight: 600, marginBottom: 5 }}>DIFFERING ELEMENTS</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                      {d.differing_elements.map((m, i) => <span key={i} className="badge badge-red">{m}</span>)}
-                    </div>
-                  </div>
-                )}
-
-                {d.reasoning && (
-                  <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: 12, fontSize: 13, lineHeight: 1.6, marginTop: 4 }}>
-                    {d.reasoning}
-                  </div>
-                )}
               </div>
             )
           })()}

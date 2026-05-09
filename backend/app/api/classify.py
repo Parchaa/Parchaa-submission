@@ -11,6 +11,7 @@ router = APIRouter()
 
 class ClassifyRequest(BaseModel):
     text: str
+    filename: str = ""
 
     @field_validator("text")
     @classmethod
@@ -52,6 +53,7 @@ def classify(req: ClassifyRequest):
     try:
         from database import log_job, save_result
         job_id = log_job(module="classification", doc_type="single",
+                         filename=req.filename,
                          duration_ms=int((time.time() - t0) * 1000))
         save_result(job_id, "classification", result)
     except Exception:

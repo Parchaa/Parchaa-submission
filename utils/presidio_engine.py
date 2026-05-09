@@ -59,8 +59,11 @@ class PassportRecognizer(PatternRecognizer):
 
 class MedicalRecordRecognizer(PatternRecognizer):
     PATTERNS = [
-        # Standard prefix + digits: IP/1234, MRN-5678, OPCH813254, CH25016452
-        Pattern("MRN", r"\b(?:IP|OP|MRN|CR|CH|OPCH)[\/\-\s]?[A-Z0-9]{4,12}\b", 0.90),
+        # Prefix must be followed immediately by digits or slash/dash then digits
+        # (excludes words like CHEMOTHERAPY that start with CH but aren't IDs)
+        Pattern("MRN", r"\b(?:IP|OP|MRN|OPCH)[\/\-\s]?[0-9]{4,12}\b", 0.90),
+        # CH/CR only when followed by digits directly (no letters — avoids CHANDIGARH, CHRONIC etc.)
+        Pattern("MRN_CH", r"\b(?:CH|CR)[\/\-]?[0-9]{4,12}\b", 0.90),
         # Labeled form: "Patient ID : CH25016452", "Encounter ID : OPCH813254"
         Pattern("LABELED_ID", r"(?:Patient\s+ID|Encounter\s+ID)\s*[:#]?\s*[A-Z0-9]{4,15}", 0.95),
         Pattern("REGN_NO", r"\b(?:Reg(?:istration)?\.?\s*No\.?\s*:?\s*)\d{4,12}\b", 0.85),
@@ -155,6 +158,25 @@ def _is_suppressed_geo(entity_type: str, text: str) -> bool:
     return text.strip().lower() in _GEO_ALLOWLIST
 
 
+def _is_false_positive(entity_type: str, text: str) -> bool:
+    """Filter systematic Presidio false positives in Indian clinical/regulatory documents."""
+    s = text.strip()
+    # Already-tokenised text re-detected (e.g. "FACILITY_NAME_001" inside brackets)
+    if re.match(r'^[A-Z][A-Z_]+_\d+$', s):
+        return True
+    # Medical route/unit abbreviations mis-tagged as LOCATION (IM, IV, SC, PO, SQ…)
+    if entity_type == "LOCATION" and len(s) <= 3 and s.isupper():
+        return True
+    if entity_type == "DATE_TIME":
+        # Lab measurement values mis-tagged as DATE_TIME  e.g. "42,000/uL", "6 ml/min"
+        if re.match(r'^\d[\d,]*\s*/\s*[a-zA-Z]', s):
+            return True
+        # Pure duration strings that are not re-identification risks
+        if re.match(r'^\d+[\-\s]?(hours?|days?|weeks?|months?|minutes?)$', s, re.IGNORECASE):
+            return True
+    return False
+
+
 # ── Engine initialisation (singleton) ─────────────────────────────────────
 
 _analyzer: Optional[AnalyzerEngine] = None
@@ -199,7 +221,7 @@ def get_anonymizer() -> AnonymizerEngine:
 
 ENTITY_TYPES = [
     "PERSON", "LOCATION", "ORG", "DATE_TIME", "EMAIL_ADDRESS", "PHONE_NUMBER",
-    "URL", "MEDICAL_LICENSE", "NRP",
+    "URL",
     "IN_AADHAAR", "IN_PAN", "IN_PASSPORT", "IN_PHONE", "MEDICAL_RECORD", "PHI_DIAGNOSIS",
 ]
 
@@ -241,7 +263,9 @@ def presidio_tokenize(text: str) -> dict:
         original = text[r.start:r.end]
         if _is_suppressed_geo(r.entity_type, original):
             continue
-        token = make_token(r.entity_type)
+        if _is_false_positive(r.entity_type, original):
+            continue
+        token = make_token(r.entity_type, original)
         chars[r.start:r.end] = list(token)
         entity_records.append({
             "entity_type": r.entity_type,
@@ -287,3 +311,64 @@ def presidio_anonymize(text: str, operator: str = "replace") -> dict:
             for r in results
         ],
     }
+
+
+def redact_pdf_inplace(input_bytes: bytes, mapping: dict) -> bytes:
+    """
+    Apply redactions to a PDF based on a text-to-token mapping.
+    mapping: { "Original Value": "[TOKEN_001]" }
+
+    Design decisions:
+    - Minimum length 6: prevents short substrings (e.g. "ali" from "Alia") matching
+      inside medical words like "malignant"
+    - No TEXT_INHIBIT_SPACES: that flag caused single-word searches to match inside
+      adjacent longer words; PDFs with injected spaces are handled by variant search
+    - Token label rendered via add_redact_annot text= parameter (not insert_textbox)
+      so coordinates are rect-relative and work regardless of PDF CTM transforms
+    - fontsize=7: small enough to fit most tokens; annotation clips to rect automatically
+    - Case variants + ligature normalization handle ALL-CAPS PDFs and typographic glyphs
+    """
+    import fitz
+    import io
+
+    doc = fitz.open(stream=input_bytes, filetype="pdf")
+
+    import unicodedata as _ud
+
+    for page in doc:
+        for original, token in mapping.items():
+            original = str(original).strip()
+            token = str(token)
+            # Minimum 6 chars: avoids short substrings matching inside medical words
+            if len(original) < 6:
+                continue
+
+            # Normalise ligatures (ﬁ→fi, ﬂ→fl, etc.)
+            original_norm = _ud.normalize("NFKD", original)
+
+            seen_rects = set()
+            variants = {original, original_norm, original.upper(), original.lower(), original.title(),
+                        original_norm.upper(), original_norm.lower(), original_norm.title()}
+            for variant in variants:
+                # No TEXT_INHIBIT_SPACES: prevents substring matches inside longer words
+                for rect in page.search_for(variant):
+                    key = (round(rect.x0, 1), round(rect.y0, 1))
+                    if key in seen_rects:
+                        continue
+                    seen_rects.add(key)
+                    # text= renders the token label inside the grey box;
+                    # coordinates are rect-relative so CTM doesn't affect positioning
+                    page.add_redact_annot(
+                        rect,
+                        text=token,
+                        fontsize=7,
+                        fill=(0.93, 0.93, 0.93),
+                        text_color=(0.1, 0.1, 0.5),
+                    )
+
+        page.apply_redactions()
+
+    output = io.BytesIO()
+    doc.save(output, garbage=4, deflate=True)
+    doc.close()
+    return output.getvalue()

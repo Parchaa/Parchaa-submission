@@ -1,4 +1,4 @@
-# CDSCO RegAI — Full Technical Documentation
+I still# CDSCO RegAI — Full Technical Documentation
 
 **India-AI Health Innovation Hackathon 2026**
 **Team / Submitter:** sneha@nyaayai.com
@@ -86,6 +86,14 @@ Microsoft Presidio with the `en_core_web_lg` spaCy model performs Named Entity R
 A **geographic allowlist** prevents over-redaction of non-identifying public geography: country names (India) and all 28 Indian states/8 Union Territories are preserved. Street addresses, localities, and city names remain redacted because they can identify individuals when combined with other fields.
 
 **Layer 3 — LLM Contextual Analysis (`anonymizer.py`)**
+This layer uses Gemini 2.5 Flash to identify quasi-identifiers that rules cannot find, such as employment details, specific lab value patterns, and facility names.
+
+**Direct PDF Redaction Pipeline (`utils/presidio_engine.py`)**
+The system supports a "PDF-in, PDF-out" workflow:
+1. **Coordinate Mapping**: Using `fitz.Page.search_for()`, the system locates the precise pixel coordinates (Rects) of all PII/PHI strings detected in Layers 1-3.
+2. **Annotation**: A `add_redact_annot` is applied to each coordinate.
+3. **In-place Replacement**: The system overlays the reversible token (e.g., `[PERSON_001]`) directly onto the redacted area. It uses auto-scaling font logic to ensure the token fits the original text's footprint perfectly.
+4. **Permanent Sanitization**: `page.apply_redactions()` physically wipes the underlying stream data, ensuring the PII is unrecoverable even if the redaction box is removed.
 
 After Layers 1 and 2, the partially anonymised text is passed to a large language model with a domain-specific prompt. The model is instructed to identify only PHI that requires contextual medical understanding — the class of identifiers that neither regex nor NER can catch:
 
@@ -551,6 +559,25 @@ All evaluation is qualitative — the system has not been tested against a label
 
 ### On Completeness
 > "Incomplete applications are the primary source of delay in drug approvals. A missing Statistical Analysis Plan sends the whole submission back — triggering weeks of round-trips. Our completeness checker identifies every missing mandatory item against the CDSCO checklist in seconds. The blocking items are flagged in red. A reviewer sees in 30 seconds what would have taken two hours of manual verification."
+
+### 2.2 Duplicate Detection Logic
+The system employs a two-stage "Blended" pipeline to prevent database inflation:
+
+1. **Stage 1: TF-IDF Cosine Filter**: A fast lexical check. If `cosine_similarity < 0.20`, documents are declared distinct immediately, saving LLM costs.
+2. **Stage 2: Semantic Blending**: If overlap is > 0.20, the LLM performs a deep comparison.
+   * **Formula**: `blended_score = (0.4 × Cosine) + (0.6 × AI_Score)`
+   * **Flagging Thresholds**:
+     * `Score ≥ 0.80`: Automatic Duplicate Flag.
+     * `0.70 ≤ Score < 0.80 AND AI_Flag = True`: Flagged as Duplicate (handles follow-up reports with different vocabulary).
+
+### 2.3 Completeness Assessment Math
+The module calculates a quantitative health score for applications:
+* **Scoring Weights**: Present (1.0), Partial (0.5), Missing (0.0).
+* **Overall Score**: `Sum of weights / Count of applicable items`.
+* **Action Logic**:
+  * `≥ 90%`: **Approve for Review**
+  * `70-89%`: **Issue Deficiency Letter** (Mostly Complete)
+  * `< 70%`: **Return Application** (Incomplete/Critical Gaps)
 
 ### On Duplicate Detection
 > "Duplicate ICSRs inflate adverse event counts and distort safety signal analysis. Our two-stage detection uses TF-IDF cosine similarity as a fast pre-filter — if two reports are clearly different, we reject instantly without any AI call. If they're semantically similar, the AI does a deep field-by-field comparison and produces a blended score. The threshold is 0.80 — set to minimise both false positives and missed duplicates."

@@ -87,6 +87,8 @@ Return ONLY valid JSON, no markdown, no commentary:
       "section": "document section or clause reference",
       "type": "Addition"|"Deletion"|"Modification"|"Data Change",
       "description": "specific description of what changed",
+      "text_before": "the exact phrase in Version 1 that was changed/removed (keep short, 3-7 words)",
+      "text_after": "the exact phrase in Version 2 that replaced it or was added (keep short, 3-7 words)",
       "impact": "High"|"Medium"|"Low",
       "regulatory_significance": "whether amendment required, who approves, any timeline"
     }}

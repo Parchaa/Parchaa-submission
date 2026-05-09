@@ -1,0 +1,39 @@
+-------------------------------------------------------------------------------
+DRUG SAFETY RESEARCH FOUNDATION - MUMBAI BRANCH
+PHASE II POST-MARKETING SURVEILLANCE SUMMARY REPORT
+-------------------------------------------------------------------------------
+CONFIDENTIAL: FOR REGULATORY REVIEW ONLY
+DATE: 22 MAY 2024
+LOCATION: Bandra Kurla Complex, Mumbai, Maharashtra 400051
+
+SUBJECT: Safety Analysis of Biosimilar Infliximab (INX-09) in Patients with Crohn's Disease.
+
+1. RESEARCH COHORT OVERVIEW:
+The study involved a cohort of 120 patients across three major sites in Western India. 
+- Site 01: Lilavati Hospital & Research Centre, Mumbai.
+- Site 02: Ruby Hall Clinic, Pune.
+- Site 03: Deenanath Mangeshkar Hospital, Pune.
+
+2. PATIENT DEMOGRAPHICS (QUASI-IDENTIFIERS):
+- Subject INX-09-001: 42 years old, Male. Admitted for surgery on 12-03-2024 at Lilavati Hospital.
+- Subject INX-09-044: 29 years old, Female. Resident of Kothrud, Pune (Pincode: 411038).
+- Subject INX-09-089: 67 years old, Male. Treated at Ruby Hall Clinic.
+
+3. ADVERSE EVENT NARRATIVE (SAMPLE CASE):
+On 15-04-2024, a patient (Subject ID: INX-09-102), who is a 34-year-old female, presented with severe abdominal pain. She was previously treated by Dr. Rajesh Mehta at Deenanath Mangeshkar Hospital. The patient's email for follow-up is smita.patil89@rediffmail.com and her contact number is 98230-11223.
+
+The event occurred exactly 4 days after her third infusion of INX-09. Lab results showed an elevated Serum Creatinine of 2.1 mg/dL (baseline 0.9 mg/dL) and eGFR of 38 ml/min.
+
+4. FULL ANONYMISATION REQUIREMENTS:
+For the purpose of public data sharing, the following generalisations are applied in the final release:
+- All patient ages must be bracketed (e.g. 30-39).
+- All specific dates (e.g. 15-04-2024) must be converted to quarters (e.g. Q2-2024).
+- All Pincodes (411038) must be truncated to the first 3 digits.
+- All institutional names (e.g. Apollo Hospital) must be replaced with generic descriptions.
+
+5. DATA INTEGRITY DECLARATION:
+This report was compiled by the Lead Safety Officer, Ms. Anjali Deshmukh, at the Mumbai Research Hub (Ext. 4451). For verification, refer to Internal Log Ref: DSRF-MUM-2024-X992.
+
+-------------------------------------------------------------------------------
+(End of Document)
+-------------------------------------------------------------------------------

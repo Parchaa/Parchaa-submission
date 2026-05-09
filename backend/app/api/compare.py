@@ -23,6 +23,7 @@ class CompareRequest(BaseModel):
 class CompletenessRequest(BaseModel):
     text: str
     checklist_type: str = "Clinical Trial Application"
+    filename: str = ""
 
     @field_validator("text")
     @classmethod
@@ -57,6 +58,7 @@ def completeness(req: CompletenessRequest):
     try:
         from database import log_job, save_result
         job_id = log_job(module="completeness", doc_type=req.checklist_type,
+                         filename=req.filename,
                          duration_ms=int((time.time() - t0) * 1000))
         save_result(job_id, "completeness", result)
     except Exception:

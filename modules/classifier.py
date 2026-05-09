@@ -59,6 +59,7 @@ Return ONLY valid JSON, no markdown, no commentary:
   "duplicate_risk": "High"|"Medium"|"Low",
   "duplicate_indicators": ["specific field that suggests a possible duplicate"],
   "flags": ["applicable flags only"],
+  "case_summary": "Concise 2-3 sentence clinical summary of the adverse event, including patient age/sex, suspect drug, and key symptoms",
   "reviewer_priority_notes": "2-sentence note: first sentence states the key clinical concern; second sentence states the recommended regulatory action (e.g. 15-day report, signal assessment, label review)"
 }}
 
@@ -68,22 +69,28 @@ Case:
 
 DUPLICATE_PROMPT = """You are a pharmacovigilance specialist reviewing two SAE reports to determine if they describe the same adverse event.
 
-In pharmacovigilance, "duplicate" means both reports refer to the same underlying event in the same patient, regardless of:
-  - different submission dates or report types (initial vs follow-up vs summary)
-  - different levels of detail or language (lay vs medical)
-  - different reporters (patient, doctor, sponsor)
-  - whether one report explicitly references the other as a follow-up
-
-Key matching signals: same patient identifiers, same suspect drug, same event onset date, same event type, same site/sponsor/reference number.
-If Case B is a follow-up, amendment, or supplementary report to Case A describing the same event — that IS a duplicate.
+In pharmacovigilance, "duplicate" means both reports refer to the same underlying event in the same patient. This includes follow-up reports, amendments, or reports from different sources (hospital vs manufacturer) describing the same event.
 
 Return JSON only:
 {{
   "is_duplicate": true|false,
-  "similarity_score": float 0.0-1.0 representing how likely these are the same event,
-  "matching_elements": [list of matching fields/identifiers],
-  "differing_elements": [list of fields that differ],
-  "reasoning": "2-3 sentence explanation of your determination"
+  "similarity_score": float 0.0-1.0 (how likely they are the same event),
+  "analysis_summary": "detailed 2-3 sentence overview of the relationship between these reports",
+  "field_comparison": [
+    {{
+      "field": "e.g., Patient ID",
+      "v1_value": "value from Case 1",
+      "v2_value": "value from Case 2",
+      "status": "Match"|"Conflict"|"Supplementary"|"Missing"
+    }}
+  ],
+  "matching_elements": ["key fields that match"],
+  "differing_elements": ["key fields that differ"],
+  "evidence_snippets": {{
+    "case1": "exact quote from Case 1 showing the key identifier/event",
+    "case2": "exact quote from Case 2 showing the same identifier/event"
+  }},
+  "reasoning": "Final justification for the duplicate status"
 }}
 
 Case 1: \"\"\"{text1}\"\"\"
@@ -151,6 +158,7 @@ def detect_duplicate(text1: str, text2: str, client, model_name: str) -> dict:
     # The second condition handles follow-up/supplementary reports that share all identifiers but
     # differ in submission date/format, which the LLM catches but the blended score may miss by a margin.
     is_duplicate = blended >= 0.80 or (llm_is_dup and blended >= 0.70)
+    llm_result["ai_similarity"]  = round(llm_score, 3)
     llm_result["similarity_score"] = round(blended, 3)
     llm_result["cosine_similarity"] = round(cosine, 3)
     llm_result["is_duplicate"] = is_duplicate

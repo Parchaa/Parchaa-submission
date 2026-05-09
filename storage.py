@@ -137,3 +137,46 @@ def store_job_artifacts(s3: S3Client, job_id: str, module: str,
         keys["result_txt"] = k
 
     return keys
+
+
+# ── Singleton S3 client from environment variables ────────────────────────
+
+_s3_singleton = None
+
+def get_s3() -> "Optional[S3Client]":
+    """
+    Return a shared S3Client built from AWS env vars.
+    Returns None if credentials or bucket are missing — callers must handle this gracefully.
+    """
+    global _s3_singleton
+    if _s3_singleton is not None:
+        return _s3_singleton
+    import os
+    bucket = os.getenv("S3_BUCKET", "")
+    key    = os.getenv("AWS_ACCESS_KEY_ID", "")
+    secret = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    region = os.getenv("AWS_REGION", "ap-south-1")
+    if not (bucket and key and secret):
+        return None
+    _s3_singleton = S3Client(bucket, key, secret, region)
+    return _s3_singleton
+
+
+def save_to_s3(job_id: str, module: str, input_text: str,
+               result: dict, filename: str = "") -> None:
+    """
+    Persist input text and result JSON to S3 for a completed job.
+    Silently no-ops if S3 is not configured.
+    """
+    s3 = get_s3()
+    if not s3:
+        return
+    fname = filename if filename else "document.txt"
+    try:
+        s3.upload_text(f"inputs/{job_id}/{fname}", input_text[:500_000])
+    except Exception:
+        pass
+    try:
+        s3.upload_json(f"results/{job_id}/{module}.json", result)
+    except Exception:
+        pass

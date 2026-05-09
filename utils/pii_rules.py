@@ -41,7 +41,8 @@ PATTERNS: List[Tuple[str, str]] = [
     # Patient / hospital IDs — labeled form (Patient ID: CH25016452) and prefix form
     ("Patient ID",      r"(?:Patient\s+ID|Encounter\s+ID|MRN|Reg(?:istration)?\s*No)[\.:\s#]+[A-Z0-9]{4,15}"),
     ("IP/OP Number",    r"\b(?:IP|OP|MRN|CH|OPCH)[\/\-\s]?\d{4,12}\b"),
-    ("Pincode",         r"\b[1-9][0-9]{5}\b"),
+    # Pincode: must not be part of DOI/ISSN/page refs (no preceding/trailing dash, dot, slash, or letter)
+    ("Pincode",         r"(?<![A-Za-z0-9.\-\/])[1-9][0-9]{5}(?![A-Za-z0-9.\-\/])"),
     # Bank account: exclude numbers preceded by '+' (phone country codes)
     ("Bank Account",    r"(?<!\+)(?<!\d)\d{11,18}(?!\d)"),
     ("IFSC Code",       r"\b[A-Z]{4}0[A-Z0-9]{6}\b"),
@@ -49,6 +50,8 @@ PATTERNS: List[Tuple[str, str]] = [
     ("Incident Report", r"\b[A-Z]{2,6}-[A-Z]{2,6}-\d{4}-\d{3,8}\b"),
     # Internal telephone extension numbers (e.g. Ext. 2241, Extn 442, x-7823)
     ("Extension Number", r"\bExt(?:n)?\.?\s*\d{3,5}\b"),
+    # GPS coordinates — precise location identifiers (e.g. 17.4147425° N, 78.4841588° E)
+    ("GPS Coordinates",  r"\b\d{1,3}\.\d{4,}\s*°?\s*[NSEWnsew]\b"),
 ]
 
 _tl = threading.local()
@@ -60,11 +63,28 @@ def _get_counters() -> dict:
     return _tl.counters
 
 
-def _make_token(category: str) -> str:
+def _get_value_map() -> dict:
+    """Maps original value → assigned token so the same value gets the same token."""
+    if not hasattr(_tl, "value_map"):
+        _tl.value_map = {}
+    return _tl.value_map
+
+
+def _make_token(category: str, value: str = "") -> str:
+    """
+    Return a numbered token for category. Same value always gets the same token
+    within a request (referential consistency for pseudonymisation).
+    """
     counters = _get_counters()
+    value_map = _get_value_map()
     key = category.replace(" ", "_").upper()
+    if value and value in value_map:
+        return value_map[value]
     counters[key] = counters.get(key, 0) + 1
-    return f"[{key}_{counters[key]:03d}]"
+    token = f"[{key}_{counters[key]:03d}]"
+    if value:
+        value_map[value] = token
+    return token
 
 
 def _phone_context_ok(text: str, start: int) -> bool:
@@ -118,11 +138,12 @@ def rule_based_detect(text: str) -> List[PIIMatch]:
 
 def pseudonymise(text: str, matches: List[PIIMatch]) -> str:
     _get_counters().clear()
+    _get_value_map().clear()
     result = []
     prev = 0
     for m in sorted(matches, key=lambda x: x.start):
         result.append(text[prev:m.start])
-        token = _make_token(m.category)
+        token = _make_token(m.category, m.value)
         m.token = token
         result.append(token)
         prev = m.end
@@ -165,9 +186,9 @@ def irreversible_anonymise(text: str) -> str:
     return text
 
 
-def make_token(category: str) -> str:
+def make_token(category: str, value: str = "") -> str:
     """Public wrapper so presidio_engine can use the same numbered token system."""
-    return _make_token(category)
+    return _make_token(category, value)
 
 
 # ── TF-IDF cosine (from india-ai-2026) for duplicate pre-filter ───────────

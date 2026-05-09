@@ -1,8 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Response
 from pydantic import BaseModel, field_validator
 from app.deps import get_ai
 from modules.anonymizer import run_anonymisation
-from utils.file_handler import truncate
+from utils.file_handler import truncate, extract_text_from_file
+from utils.presidio_engine import redact_pdf_inplace
+import io
+import re
 
 router = APIRouter()
 
@@ -24,6 +27,55 @@ class AnonymizeRequest(BaseModel):
         if v not in ("pseudonymise", "full"):
             raise ValueError("mode must be 'pseudonymise' or 'full'")
         return v
+
+
+@router.post("/anonymize/pdf")
+async def anonymize_pdf(file: UploadFile = File(...), mode: str = "pseudonymise"):
+    """
+    Direct PDF-to-PDF redaction. Extracts text for analysis, 
+    then applies redaction boxes with tokens back onto the original layout.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files supported for direct redaction")
+    
+    content = await file.read()
+    
+    # Wrap bytes for extraction utility
+    class MockFile:
+        def __init__(self, b, name):
+            self.b = b
+            self.name = name
+        def read(self): return self.b
+        def seek(self, _): pass
+
+    text = extract_text_from_file(MockFile(content, file.filename))
+    if not text:
+        raise HTTPException(400, "Could not extract text from PDF for analysis")
+
+    client, model = get_ai()
+    result = run_anonymisation(truncate(text), client, model, mode)
+    
+    # Build {original_text: token} mapping for PDF redaction.
+    # In full mode, strip token numbers ([PERSON_001] → [PERSON]) to match
+    # the de-numbered final_text output. Layer 3 natural-language replacements
+    # are also included so e.g. "GMCH-2019-7721" → "[an administrative reference]".
+    mapping = {}
+    for e in result["all_entities"]:
+        val = e.get("value", "")
+        tok = e.get("token", "")
+        if not val or not tok:
+            continue
+        if mode == "full":
+            tok = re.sub(r'(_\d{3})(\])$', r'\2', tok)
+        mapping[val] = tok
+            
+    redacted_content = redact_pdf_inplace(content, mapping)
+    
+    return Response(
+        content=redacted_content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=redacted_{file.filename}"}
+    )
 
 
 @router.post("/anonymize")

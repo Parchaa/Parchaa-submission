@@ -91,6 +91,16 @@ class S3Artifact(Base):
     created_at    = Column(DateTime, default=datetime.utcnow)
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    email      = Column(String(128), unique=True, nullable=False)
+    full_name  = Column(String(128), nullable=False)
+    role       = Column(String(32), nullable=False, default="standard")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 # ── Encryption helpers ───────────────────────────────────────────────────────
 
 def _get_fernet():

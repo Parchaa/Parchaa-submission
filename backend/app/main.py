@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from app.api import upload, anonymize, summarize, classify, compare, report, health
+from app.api import upload, anonymize, summarize, classify, compare, report, health, history
 
 
 @asynccontextmanager
@@ -54,3 +54,4 @@ app.include_router(summarize.router, prefix="/api")
 app.include_router(classify.router,  prefix="/api")
 app.include_router(compare.router,   prefix="/api")
 app.include_router(report.router,    prefix="/api")
+app.include_router(history.router,   prefix="/api")
